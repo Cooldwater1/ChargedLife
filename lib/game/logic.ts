@@ -239,7 +239,17 @@ export function getDebtInterest(life: LifeStats) {
 }
 
 export function getWorkPayPerClick(life: LifeStats) {
-  return life.salary > 0 ? Math.floor(life.salary / ACTIONS_PER_YEAR) : 2500;
+  if (life.jobId !== "unemployed" && life.salary > 0) return life.salary;
+  if (life.partTimeJobId && life.partTimeJobId !== "none" && life.partTimeSalary > 0) {
+    return life.partTimeSalary;
+  }
+  return 2500;
+}
+
+function isStudying(life: LifeStats) {
+  if (!life.activeDegreeId || life.activeDegreeId === "None") return false;
+  if (life.completedDegrees.includes(life.activeDegreeId)) return false;
+  return getDegreeProgress(life, life.activeDegreeId) < 100;
 }
 
 export function getBusinessIncomeEstimate(life: LifeStats) {
@@ -270,7 +280,7 @@ export function getRentalIncomeEstimate(life: LifeStats) {
 
 export function getEconomyBreakdown(life: LifeStats): EconomyBreakdown {
   const workPayPerClick = getWorkPayPerClick(life);
-  const possibleWorkIncomePerYear = workPayPerClick * ACTIONS_PER_YEAR;
+  const possibleWorkIncomePerYear = life.hasWorkedThisYear ? 0 : workPayPerClick;
 
   const businessIncomeEstimate = getBusinessIncomeEstimate(life);
   const rentalIncomeEstimate = getRentalIncomeEstimate(life);
@@ -357,6 +367,7 @@ export function formatEventEffect(effect: LifeEventEffect) {
   if (effect.charismaGain) changes.push(`Charisma ${signed(effect.charismaGain)}`);
   if (effect.disciplineGain) changes.push(`Discipline ${signed(effect.disciplineGain)}`);
   if (effect.reputationGain) changes.push(`Reputation ${signed(effect.reputationGain)}`);
+  if (effect.stressGain) changes.push(`Stress Control ${signed(effect.stressGain)}`);
   if (effect.luckGain) changes.push(`Luck ${signed(effect.luckGain)}`);
   if (effect.careerXpGain) changes.push(`Career XP ${signed(effect.careerXpGain)}`);
   if (effect.businessValueGain) changes.push(`Business Value ${signed(effect.businessValueGain)}`);
@@ -396,6 +407,7 @@ function applyEventEffect(life: LifeStats, effect: LifeEventEffect): LifeStats {
     charisma: clamp(life.charisma + (effect.charismaGain || 0)),
     discipline: clamp(life.discipline + (effect.disciplineGain || 0)),
     reputation: clamp(life.reputation + (effect.reputationGain || 0)),
+    stress: clamp((life.stress ?? 65) + (effect.stressGain || 0)),
     luck: clamp(life.luck + (effect.luckGain || 0)),
     familyRelationship: clamp(life.familyRelationship + (effect.familyRelationshipGain || 0)),
     friendships: clamp(life.friendships + (effect.friendshipsGain || 0)),
@@ -441,6 +453,7 @@ function applyEventEffect(life: LifeStats, effect: LifeEventEffect): LifeStats {
       relationshipStatus: "Single",
       partnerName: "",
       relationshipQuality: 0,
+      relationshipStartedAge: null,
     };
   }
 
@@ -588,6 +601,14 @@ export function attendDegree(life: LifeStats, degree: DegreeProgram) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
+  if (life.jobId !== "unemployed") {
+    return {
+      ...life,
+      popupMessage: "You cannot study while working a full-time job. Part-time jobs are allowed, but full-time work is too much.",
+      yearNotes: addYearNote(life, "Full-time work blocked your study plans."),
+    };
+  }
+
   if (life.completedDegrees.includes(degree.id)) {
     return {
       ...life,
@@ -646,6 +667,7 @@ export function attendDegree(life: LifeStats, degree: DegreeProgram) {
       [degree.id]: targetPaid,
     },
     happiness: clamp(life.happiness - degree.happinessCost),
+    stress: clamp((life.stress ?? 65) - randomBetween(4, 9)),
     intelligence: clamp(life.intelligence + degree.intelligenceGain),
     charisma: clamp(life.charisma + degree.charismaGain),
     discipline: clamp(life.discipline + degree.disciplineGain),
@@ -696,6 +718,7 @@ export function doLifeGrowth(life: LifeStats, action: LifeGrowthAction) {
     charisma: clamp(life.charisma + action.charismaGain),
     discipline: clamp(life.discipline + action.disciplineGain),
     reputation: clamp(life.reputation + action.reputationGain),
+    stress: clamp((life.stress ?? 65) + (action.category === "mental" ? 12 : action.category === "health" ? 7 : action.category === "social" ? 4 : 3)),
     yearNotes: addYearNote(life, `${action.name}: ${action.description}`),
   });
 }
@@ -708,6 +731,24 @@ export function applyForJob(life: LifeStats, job: Job) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
+  const employmentType = job.employmentType || "fullTime";
+
+  if (employmentType === "fullTime" && isStudying(life)) {
+    return {
+      ...life,
+      popupMessage: "You cannot take a full-time job while studying. Apply for a part-time job instead, or finish school first.",
+      yearNotes: addYearNote(life, "Full-time job blocked because you are currently studying."),
+    };
+  }
+
+  if (employmentType === "partTime" && life.jobId !== "unemployed") {
+    return {
+      ...life,
+      popupMessage: "You already have a full-time job. Quit or avoid full-time work if you want a part-time job beside school.",
+      yearNotes: addYearNote(life, "Part-time job blocked because you already have full-time work."),
+    };
+  }
+
   if (!canApplyForJob(life, job)) {
     const missing = getJobMissingRequirements(life, job, getDegreeName, getJobName);
 
@@ -719,6 +760,21 @@ export function applyForJob(life: LifeStats, job: Job) {
     });
   }
 
+  if (employmentType === "partTime") {
+    return consumeAction({
+      ...life,
+      partTimeJobId: job.id,
+      partTimeJob: job.title,
+      partTimeSalary: job.salary,
+      happiness: clamp(life.happiness + randomBetween(1, 4)),
+      reputation: clamp(life.reputation + randomBetween(1, 3)),
+      stress: clamp((life.stress ?? 65) - randomBetween(1, 4)),
+      lifetimeMilestones: addMilestone(life, `Hired part-time as ${job.title}`),
+      popupMessage: `You got a part-time job as ${job.title}. Yearly pay: ${formatMoney(job.salary)}.`,
+      yearNotes: addYearNote(life, `You got a part-time job as ${job.title}.`),
+    });
+  }
+
   return consumeAction({
     ...life,
     jobId: job.id,
@@ -727,8 +783,12 @@ export function applyForJob(life: LifeStats, job: Job) {
     salary: job.salary,
     careerLevel: Math.max(life.careerLevel + 1, job.requiredSkill),
     careerXp: 0,
+    partTimeJobId: "none",
+    partTimeJob: "None",
+    partTimeSalary: 0,
     happiness: clamp(life.happiness + randomBetween(2, 6)),
     reputation: clamp(life.reputation + randomBetween(2, 5)),
+    stress: clamp((life.stress ?? 65) - randomBetween(3, 7)),
     lifetimeMilestones: addMilestone(life, `Hired as ${job.title}`),
     popupMessage: `You got hired as ${job.title}. Salary: ${formatMoney(job.salary)}/year.`,
     yearNotes: addYearNote(life, `You got hired as ${job.title}.`),
@@ -739,24 +799,64 @@ export function work(life: LifeStats) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
+  if (life.hasWorkedThisYear) {
+    return {
+      ...life,
+      popupMessage: "You already worked this year. Press End Year before working again.",
+      yearNotes: addYearNote(life, "You already worked this year."),
+    };
+  }
+
   const income = getWorkPayPerClick(life);
+  const hasFullTimeJob = life.jobId !== "unemployed";
+  const hasPartTimeJob = !!life.partTimeJobId && life.partTimeJobId !== "none";
+  const workLabel = hasFullTimeJob
+    ? life.job
+    : hasPartTimeJob
+      ? life.partTimeJob
+      : "odd jobs";
+
   const jobExperience =
-    life.jobId === "unemployed"
-      ? life.jobExperience
-      : {
+    hasFullTimeJob
+      ? {
           ...life.jobExperience,
           [life.jobId]: (life.jobExperience[life.jobId] || 0) + 1,
-        };
+        }
+      : hasPartTimeJob
+        ? {
+            ...life.jobExperience,
+            [life.partTimeJobId]: (life.jobExperience[life.partTimeJobId] || 0) + 1,
+          }
+        : life.jobExperience;
 
   return consumeAction({
     ...life,
     cash: life.cash + income,
-    happiness: clamp(life.happiness - randomBetween(1, 4)),
+    hasWorkedThisYear: true,
+    happiness: clamp(life.happiness - (hasFullTimeJob ? randomBetween(2, 5) : randomBetween(1, 3))),
+    stress: clamp((life.stress ?? 65) - (hasFullTimeJob ? randomBetween(8, 14) : randomBetween(4, 8))),
     discipline: clamp(life.discipline + randomBetween(1, 3)),
-    careerXp: life.careerXp + (life.jobId === "unemployed" ? 5 : randomBetween(18, 30)),
+    careerXp: life.careerXp + (hasFullTimeJob ? randomBetween(22, 35) : randomBetween(8, 16)),
     jobExperience,
     yearsWorked: life.yearsWorked + 1,
-    yearNotes: addYearNote(life, `You worked and earned ${formatMoney(income)}.`),
+    yearNotes: addYearNote(life, `You worked ${workLabel} and earned ${formatMoney(income)}.`),
+  });
+}
+
+export function quickRecoverStress(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  const cost = Math.min(Math.max(0, life.cash), 300);
+
+  return consumeAction({
+    ...life,
+    cash: life.cash - cost,
+    stress: clamp((life.stress ?? 65) + randomBetween(18, 28)),
+    happiness: clamp(life.happiness + randomBetween(2, 5)),
+    health: clamp(life.health + randomBetween(1, 3)),
+    popupMessage: `You took time to reset and recover. Stress control improved. Cost: ${formatMoney(cost)}.`,
+    yearNotes: addYearNote(life, "You took time to reset and recover."),
   });
 }
 
@@ -845,6 +945,7 @@ export function improveFamily(life: LifeStats) {
   return consumeAction({
     ...life,
     familyRelationship: clamp(life.familyRelationship + randomBetween(6, 12)),
+    stress: clamp((life.stress ?? 65) + randomBetween(3, 7)),
     happiness: clamp(life.happiness + randomBetween(3, 8)),
     cash: life.cash - 250,
     yearNotes: addYearNote(life, "You spent quality time with family."),
@@ -855,12 +956,21 @@ export function makeFriends(life: LifeStats) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
+  const friendNames = ["Alex", "Taylor", "Jordan", "Morgan", "Casey", "Robin", "Sam", "Jamie", "Avery", "Riley"];
+  const friendsList = [...(life.friendsList || [])];
+  if (friendsList.length < 12 && randomBetween(1, 100) <= 55) {
+    const possible = friendNames.filter((name) => !friendsList.includes(name));
+    if (possible.length > 0) friendsList.push(possible[randomBetween(0, possible.length - 1)]);
+  }
+
   return consumeAction({
     ...life,
     friendships: clamp(life.friendships + randomBetween(5, 10)),
     socialCircle: Math.min(100, life.socialCircle + randomBetween(1, 3)),
+    friendsList,
     charisma: clamp(life.charisma + randomBetween(1, 3)),
     happiness: clamp(life.happiness + randomBetween(2, 6)),
+    stress: clamp((life.stress ?? 65) + randomBetween(2, 5)),
     cash: life.cash - 350,
     yearNotes: addYearNote(life, "You spent time making friends."),
   });
@@ -892,6 +1002,7 @@ export function dateLife(life: LifeStats) {
       relationshipStatus: "Dating",
       partnerName: names[randomBetween(0, names.length - 1)],
       relationshipQuality: randomBetween(35, 65),
+      relationshipStartedAge: life.age,
       happiness: clamp(life.happiness + 8),
       lifetimeMilestones: addMilestone(life, "Started dating someone"),
       popupMessage: "You started dating someone.",
@@ -902,6 +1013,7 @@ export function dateLife(life: LifeStats) {
   return consumeAction({
     ...life,
     relationshipQuality: clamp(life.relationshipQuality + randomBetween(5, 12)),
+    stress: clamp((life.stress ?? 65) + randomBetween(2, 5)),
     happiness: clamp(life.happiness + randomBetween(3, 8)),
     cash: life.cash - 700,
     yearNotes: addYearNote(life, `You spent time with ${life.partnerName}.`),
@@ -937,6 +1049,7 @@ export function proposeMarriage(life: LifeStats) {
     ...life,
     cash: life.cash - 8000,
     relationshipStatus: "Married",
+    relationshipStartedAge: life.relationshipStartedAge || life.age,
     relationshipQuality: clamp(life.relationshipQuality + 15),
     happiness: clamp(life.happiness + 10),
     reputation: clamp(life.reputation + 3),
@@ -960,15 +1073,19 @@ export function haveChild(life: LifeStats) {
 
   const cost = 5000 + life.children * 3000;
 
+  const childNames = ["Noah", "Emma", "Liam", "Olivia", "Leo", "Mia", "Lucas", "Sofia", "Elias", "Nora"];
+  const childName = childNames[randomBetween(0, childNames.length - 1)];
+
   return consumeAction({
     ...life,
     cash: life.cash - cost,
     children: life.children + 1,
+    childrenNames: [...(life.childrenNames || []), childName],
     happiness: clamp(life.happiness + 8),
     relationshipQuality: clamp(life.relationshipQuality + 5),
     lifetimeMilestones: addMilestone(life, `Had child #${life.children + 1}`),
-    popupMessage: "You had a child.",
-    yearNotes: addYearNote(life, `You had a child. Cost: ${formatMoney(cost)}.`),
+    popupMessage: `You had a child named ${childName}.`,
+    yearNotes: addYearNote(life, `You had a child named ${childName}. Cost: ${formatMoney(cost)}.`),
   });
 }
 
@@ -2201,6 +2318,10 @@ function getLowStatWarning(life: LifeStats) {
     return "Critical warning: Your happiness is below 5%. Use Life & Growth or relationship actions immediately.";
   }
 
+  if ((life.stress ?? 65) < 10) {
+    return "Critical warning: Your stress control is dangerously low. Use Reset & Recover before your life starts falling apart.";
+  }
+
   return null;
 }
 
@@ -2238,6 +2359,7 @@ export function endYear(life: LifeStats) {
     ...life,
     age: life.age + 1,
     hasAskedPromotionThisYear: false,
+    hasWorkedThisYear: false,
     popupMessage: null,
   };
 
@@ -2275,10 +2397,30 @@ export function endYear(life: LifeStats) {
     }
   }
 
-  if (updated.jobId === "unemployed") {
+  if (updated.jobId === "unemployed" && (!updated.partTimeJobId || updated.partTimeJobId === "none")) {
     updated = {
       ...updated,
       happiness: clamp(updated.happiness - randomBetween(1, 3)),
+    };
+  }
+
+  const yearlyStressDrain =
+    (updated.jobId !== "unemployed" ? randomBetween(4, 8) : 0) +
+    (updated.partTimeJobId && updated.partTimeJobId !== "none" ? randomBetween(2, 5) : 0) +
+    (isStudying(updated) ? randomBetween(3, 7) : 0);
+
+  updated = {
+    ...updated,
+    stress: clamp((updated.stress ?? 65) - yearlyStressDrain),
+  };
+
+  if ((updated.stress ?? 65) < 25) {
+    updated = {
+      ...updated,
+      health: clamp(updated.health - randomBetween(3, 7)),
+      happiness: clamp(updated.happiness - randomBetween(4, 9)),
+      discipline: clamp(updated.discipline - randomBetween(2, 5)),
+      eventLog: addLog(updated, "Stress Warning: Low stress control hurt your health, happiness, and discipline."),
     };
   }
 

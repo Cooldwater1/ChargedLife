@@ -62,6 +62,7 @@ import {
   moveOut,
   payDebt,
   proposeMarriage,
+  quickRecoverStress,
   renovateHome,
   rentHousing,
   rentOutHome,
@@ -112,7 +113,12 @@ const jobCategories: { id: JobCategory; label: string; description: string }[] =
     {
       id: "starter",
       label: "Starter Jobs",
-      description: "Entry-level jobs and early career paths.",
+      description: "Entry-level full-time jobs and early career paths.",
+    },
+    {
+      id: "partTime",
+      label: "Part-Time Jobs",
+      description: "Flexible work you can keep beside school.",
     },
     {
       id: "business",
@@ -242,19 +248,30 @@ function normalizeLife(savedLife: LifeStats): LifeStats {
     careerXp: savedLife.careerXp || 0,
     jobExperience: savedLife.jobExperience || {},
     hasAskedPromotionThisYear: savedLife.hasAskedPromotionThisYear || false,
+    hasWorkedThisYear: savedLife.hasWorkedThisYear || false,
+
+    partTimeJobId: savedLife.partTimeJobId || "none",
+    partTimeJob: savedLife.partTimeJob || "None",
+    partTimeSalary: savedLife.partTimeSalary || 0,
 
     pendingLifeEvent: savedLife.pendingLifeEvent || null,
     popupMessage: savedLife.popupMessage || null,
     nextLifeEventAge: savedLife.nextLifeEventAge || savedLife.age + 2,
     lastLifeEventId: savedLife.lastLifeEventId || "",
 
+    stress: savedLife.stress ?? 65,
+
     familyRelationship: savedLife.familyRelationship ?? 50,
     friendships: savedLife.friendships ?? 25,
     socialCircle: savedLife.socialCircle ?? 0,
+    familyMembers: savedLife.familyMembers || ["Mother", "Father"],
+    friendsList: savedLife.friendsList || [],
     relationshipStatus: savedLife.relationshipStatus || "Single",
     partnerName: savedLife.partnerName || "",
     relationshipQuality: savedLife.relationshipQuality ?? 0,
+    relationshipStartedAge: savedLife.relationshipStartedAge ?? null,
     children: savedLife.children ?? 0,
+    childrenNames: savedLife.childrenNames || [],
 
     currentHousing: savedLife.currentHousing || {
       type: "none",
@@ -488,6 +505,7 @@ export default function Home() {
               <MainStat label="Housing" value={life.currentHousing.name} />
               <MainStat label="Business" value={life.business} />
               <MainStat label="Legacy" value={legacyScore.toLocaleString()} />
+              <MainStat label="Stress Control" value={`${life.stress}/100`} />
               <MainStat label="Cars" value={`${life.ownedCars.length}`} />
               <MainStat label="Homes" value={`${life.ownedHomes.length}`} />
             </div>
@@ -514,6 +532,7 @@ export default function Home() {
               <StatBar label="Discipline" value={life.discipline} />
               <StatBar label="Luck" value={life.luck} />
               <StatBar label="Reputation" value={life.reputation} />
+              <StatBar label="Stress Control" value={life.stress} />
               <StatBar label="Family" value={life.familyRelationship} />
               <StatBar label="Friends" value={life.friendships} />
               <StatBar label="Relationship" value={life.relationshipQuality} />
@@ -540,12 +559,13 @@ export default function Home() {
               <MainStat label="Degree Progress" value={`${getDegreeProgress(life, life.activeDegreeId)}/100`} />
               <MainStat label="Student Loan" value={life.studentLoanStatus.replace("_", " ")} />
               <MainStat label="Loan Used" value={`${formatMoney(life.studentLoanUsed)}/${formatMoney(life.studentLoanLimit)}`} />
-              <MainStat label="Job" value={life.job} />
+              <MainStat label="Full-Time Job" value={life.job} />
+              <MainStat label="Part-Time Job" value={life.partTimeJob || "None"} />
               <MainStat label="Career Path" value={currentJob?.careerPath || "None"} />
               <MainStat label="Job Experience" value={life.jobId === "unemployed" ? "None" : `${getCurrentJobExperience(life)}`} />
               <MainStat label="Next Promotion" value={currentJob?.nextJobId ? getJobName(currentJob.nextJobId) : life.jobId === "unemployed" ? "Get a job first" : "Top role"} />
               <MainStat label="Salary" value={formatMoney(life.salary)} />
-              <MainStat label="Work Pay" value={`${formatMoney(getWorkPayPerClick(life))}/click`} />
+              <MainStat label="Yearly Work Pay" value={life.hasWorkedThisYear ? "Already worked" : formatMoney(getWorkPayPerClick(life))} />
             </div>
 
             <h3 className="mb-3 mt-6 text-lg font-black">Business</h3>
@@ -679,7 +699,7 @@ function DesktopSidebar({
           </div>
           <div>
             <p className="text-sm font-black text-white">{life.name}</p>
-            <p className="text-xs text-zinc-500">Age {life.age} • {life.job}</p>
+            <p className="text-xs text-zinc-500">Age {life.age} • {life.job}{life.partTimeJobId !== "none" ? ` • PT: ${life.partTimeJob}` : ""}</p>
           </div>
         </div>
         <div className="mt-4 flex items-center justify-between text-xs font-bold text-zinc-500">
@@ -708,7 +728,7 @@ function DesktopRightRail({
         <div className="space-y-4">
           <RailStat icon="💚" label="Health" value={life.health} />
           <RailStat icon="🙂" label="Happiness" value={life.happiness} />
-          <RailStat icon="⚡" label="Energy" value={Math.max(0, Math.min(100, life.discipline))} />
+          <RailStat icon="⚡" label="Stress Control" value={life.stress} />
           <RailStat icon="👥" label="Social" value={life.friendships} />
         </div>
       </SidePanel>
@@ -936,10 +956,12 @@ function EconomyPage({
       <div className="space-y-3">
         <SimpleMoneyRow
           label="Work income"
-          value={`${formatMoney(economy.workPayPerClick)}/click`}
-          description={`If you work ${ACTIONS_PER_YEAR} times, you can earn ${formatMoney(
-            economy.possibleWorkIncomePerYear
-          )}.`}
+          value={life.hasWorkedThisYear ? "Already worked" : formatMoney(economy.workPayPerClick)}
+          description={
+            life.hasWorkedThisYear
+              ? "You already worked this year. End the year to work again."
+              : `Work once this year to receive ${formatMoney(economy.possibleWorkIncomePerYear)}.`
+          }
           type="income"
         />
 
@@ -1093,54 +1115,183 @@ function ActionsRouter({
   }
 
   if (actionPage === "relationships") {
+    const relationshipYears =
+      life.relationshipStartedAge && life.relationshipStatus !== "Single"
+        ? Math.max(0, life.age - life.relationshipStartedAge)
+        : 0;
+
+    const familyMembers = life.familyMembers?.length
+      ? life.familyMembers
+      : ["Mother", "Father"];
+    const friendsList = life.friendsList || [];
+    const childrenNames = life.childrenNames || [];
+
     return (
       <ActionSubPage title="Relationships" onBack={() => setActionPage("main")}>
-        <div className="grid grid-cols-2 gap-3">
-          <MainStat label="Family" value={`${life.familyRelationship}/100`} />
-          <MainStat label="Friends" value={`${life.friendships}/100`} />
-          <MainStat label="Status" value={life.relationshipStatus} />
-          <MainStat label="Partner" value={life.partnerName || "None"} />
-          <MainStat label="Children" value={`${life.children}`} />
-          <MainStat label="Quality" value={`${life.relationshipQuality}/100`} />
+        <div className="rounded-3xl border border-pink-500/25 bg-gradient-to-br from-pink-500/10 via-zinc-950 to-black p-4 shadow-xl shadow-pink-950/20">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.25em] text-pink-300">
+                Social Life
+              </p>
+              <h3 className="mt-2 text-2xl font-black text-white">
+                {life.relationshipStatus === "Single"
+                  ? "Single"
+                  : `${life.relationshipStatus} with ${life.partnerName}`}
+              </h3>
+              <p className="mt-1 text-sm leading-6 text-zinc-400">
+                Family, friends, love, and children all shape your happiness and legacy.
+              </p>
+            </div>
+
+            <div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-pink-500/15 text-3xl">
+              💞
+            </div>
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
+            <MainStat label="Family" value={`${life.familyRelationship}/100`} />
+            <MainStat label="Friends" value={`${friendsList.length}`} />
+            <MainStat label="Love" value={life.relationshipStatus} />
+            <MainStat label="Children" value={`${life.children}`} />
+          </div>
         </div>
 
-        <ActionButton
-          title="Spend Time With Family"
-          description="Costs $250. Improves family relationship and happiness."
-          onClick={() => updateLife(improveFamily(life))}
-        />
+        <div className="grid grid-cols-1 gap-4 lg:grid-cols-2">
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h4 className="text-lg font-black text-white">Family</h4>
+                <p className="text-sm text-zinc-500">Bond: {life.familyRelationship}/100</p>
+              </div>
+              <span className="text-2xl">👪</span>
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {familyMembers.map((member) => (
+                <span key={member} className="rounded-full border border-zinc-700 bg-zinc-900 px-3 py-1 text-xs font-bold text-zinc-300">
+                  {member}
+                </span>
+              ))}
+            </div>
+          </div>
 
-        <ActionButton
-          title="Make Friends"
-          description="Costs $350. Improves friendships, charisma, and happiness."
-          onClick={() => updateLife(makeFriends(life))}
-        />
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h4 className="text-lg font-black text-white">Friends</h4>
+                <p className="text-sm text-zinc-500">{friendsList.length} close friends • bond {life.friendships}/100</p>
+              </div>
+              <span className="text-2xl">🤝</span>
+            </div>
+            {friendsList.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {friendsList.map((friend) => (
+                  <span key={friend} className="rounded-full border border-blue-500/25 bg-blue-500/10 px-3 py-1 text-xs font-bold text-blue-200">
+                    {friend}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-2xl bg-zinc-900 p-3 text-sm text-zinc-500">
+                You do not have any named close friends yet. Use Make Friends to grow your circle.
+              </p>
+            )}
+          </div>
 
-        <ActionButton
-          title={
-            life.relationshipStatus === "Single"
-              ? "Go Dating"
-              : "Spend Time With Partner"
-          }
-          description={
-            life.relationshipStatus === "Single"
-              ? "Chance to start a relationship."
-              : `Spend time with ${life.partnerName}.`
-          }
-          onClick={() => updateLife(dateLife(life))}
-        />
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h4 className="text-lg font-black text-white">Love Life</h4>
+                <p className="text-sm text-zinc-500">
+                  {life.relationshipStatus === "Single"
+                    ? "No partner yet"
+                    : `${relationshipYears} year${relationshipYears === 1 ? "" : "s"} together`}
+                </p>
+              </div>
+              <span className="text-2xl">❤️</span>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <MainStat label="Partner" value={life.partnerName || "None"} />
+              <MainStat label="Quality" value={`${life.relationshipQuality}/100`} />
+            </div>
+          </div>
 
-        <ActionButton
-          title="Propose Marriage"
-          description="Only works if you are dating someone."
-          onClick={() => updateLife(proposeMarriage(life))}
-        />
+          <div className="rounded-3xl border border-zinc-800 bg-zinc-950/80 p-4">
+            <div className="mb-3 flex items-center justify-between">
+              <div>
+                <h4 className="text-lg font-black text-white">Children</h4>
+                <p className="text-sm text-zinc-500">{life.children} child{life.children === 1 ? "" : "ren"}</p>
+              </div>
+              <span className="text-2xl">🧸</span>
+            </div>
+            {childrenNames.length > 0 ? (
+              <div className="flex flex-wrap gap-2">
+                {childrenNames.map((child, index) => (
+                  <span key={`${child}-${index}`} className="rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-xs font-bold text-orange-200">
+                    {child}
+                  </span>
+                ))}
+              </div>
+            ) : (
+              <p className="rounded-2xl bg-zinc-900 p-3 text-sm text-zinc-500">
+                You do not have children yet. Marriage is required before having kids.
+              </p>
+            )}
+          </div>
+        </div>
 
-        <ActionButton
-          title="Have Child"
-          description="Only works if married."
-          onClick={() => updateLife(haveChild(life))}
-        />
+        <div className="rounded-3xl border border-orange-500/25 bg-orange-500/10 p-4">
+          <p className="text-sm font-black text-orange-300">Relationship Actions</p>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            These actions use yearly actions. Social actions can also help stress control and happiness.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-1 gap-3 md:grid-cols-2">
+          <ActionButton
+            title="Spend Time With Family"
+            description="Costs $250. Improves family bond, happiness, and stress control."
+            onClick={() => updateLife(improveFamily(life))}
+          />
+
+          <ActionButton
+            title="Make Friends"
+            description="Costs $350. Can add named friends and improves charisma, happiness, and social life."
+            onClick={() => updateLife(makeFriends(life))}
+          />
+
+          <ActionButton
+            title={
+              life.relationshipStatus === "Single"
+                ? "Go Dating"
+                : "Spend Time With Partner"
+            }
+            description={
+              life.relationshipStatus === "Single"
+                ? "Chance to start a relationship."
+                : `Spend time with ${life.partnerName}. Improves relationship quality.`
+            }
+            onClick={() => updateLife(dateLife(life))}
+          />
+
+          <ActionButton
+            title="Propose Marriage"
+            description="Only works if you are dating someone. Higher relationship quality improves the chance."
+            onClick={() => updateLife(proposeMarriage(life))}
+          />
+
+          <ActionButton
+            title="Have Child"
+            description="Only works if married. Adds a named child to your family."
+            onClick={() => updateLife(haveChild(life))}
+          />
+
+          <ActionButton
+            title="Reset & Recover"
+            description="Quick stress-control fix. Costs up to $300 and helps health and happiness."
+            onClick={() => updateLife(quickRecoverStress(life))}
+          />
+        </div>
       </ActionSubPage>
     );
   }
@@ -1289,15 +1440,23 @@ function ActionsRouter({
     return (
       <ActionSubPage title="Career" onBack={() => setActionPage("main")}>
         <ActionButton
-          title="Work"
+          title={life.hasWorkedThisYear ? "Work (Already Done)" : "Work"}
           description={
-            life.job === "Unemployed"
-              ? "Do small jobs for quick cash. Pays $2,500 per click."
-              : `Work as ${life.job}. Pays ${formatMoney(
-                  getWorkPayPerClick(life)
-                )}/click.`
+            life.hasWorkedThisYear
+              ? "You already worked this year. Press End Year before working again."
+              : life.job !== "Unemployed"
+                ? `Work full-time as ${life.job}. Pays the full yearly salary: ${formatMoney(getWorkPayPerClick(life))}.`
+                : life.partTimeJobId !== "none"
+                  ? `Work part-time as ${life.partTimeJob}. Pays ${formatMoney(getWorkPayPerClick(life))} this year.`
+                  : "Do odd jobs for quick cash. Pays $2,500 this year."
           }
           onClick={() => updateLife(work(life))}
+        />
+
+        <ActionButton
+          title="Reset & Recover"
+          description="Quick stress-control fix. Useful after work or school."
+          onClick={() => updateLife(quickRecoverStress(life))}
         />
 
         <ActionButton
@@ -2214,8 +2373,7 @@ function JobApplyButton({
       <span className="block text-base font-black text-white">{job.title}</span>
 
       <span className="mt-1 block text-[13px] leading-5 text-zinc-400">
-        {formatMoney(job.salary)}/year • Work pays{" "}
-        {formatMoney(Math.floor(job.salary / ACTIONS_PER_YEAR))}/click
+        {formatMoney(job.salary)}/year • {job.employmentType === "partTime" ? "Part-time" : "Full-time"}
       </span>
 
       <div className="mt-3 grid grid-cols-2 gap-2 text-xs">
@@ -2314,7 +2472,7 @@ function TopSummary({
                 {life.name}
               </h1>
               <p className="mt-1 text-base font-medium text-zinc-400">
-                Age {life.age} • {life.job}
+                Age {life.age} • {life.job}{life.partTimeJobId !== "none" ? ` • PT: ${life.partTimeJob}` : ""}
               </p>
             </div>
           </div>

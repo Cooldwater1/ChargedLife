@@ -75,6 +75,7 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
         trait.reputationBonus -
         difficulty.statPenalty
     ),
+    stress: clamp(randomBetween(55, 78) + Math.floor(trait.disciplineBonus / 2)),
 
     cash: startingCash,
     netWorth: startingCash,
@@ -102,6 +103,11 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     careerXp: 0,
     jobExperience: {},
     hasAskedPromotionThisYear: false,
+    hasWorkedThisYear: false,
+
+    partTimeJobId: "none",
+    partTimeJob: "None",
+    partTimeSalary: 0,
 
     pendingLifeEvent: null,
     popupMessage: null,
@@ -111,10 +117,14 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     familyRelationship: randomBetween(35, 75),
     friendships: randomBetween(10, 45),
     socialCircle: randomBetween(0, 8),
+    familyMembers: ["Mother", "Father"],
+    friendsList: [],
     relationshipStatus: "Single",
     partnerName: "",
     relationshipQuality: 0,
+    relationshipStartedAge: null,
     children: 0,
+    childrenNames: [],
 
     currentHousing: {
       type: "none",

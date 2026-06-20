@@ -11,6 +11,7 @@ export type SkillId =
 
 export type JobCategory =
   | "starter"
+  | "partTime"
   | "business"
   | "marketing"
   | "tech"
@@ -73,6 +74,7 @@ export type LifeEventEffect = {
   charismaGain?: number;
   disciplineGain?: number;
   reputationGain?: number;
+  stressGain?: number;
   luckGain?: number;
   cashGain?: number;
   debtGain?: number;
@@ -208,6 +210,7 @@ export type LifeStats = {
   discipline: number;
   luck: number;
   reputation: number;
+  stress: number;
 
   cash: number;
   netWorth: number;
@@ -235,6 +238,11 @@ export type LifeStats = {
   careerXp: number;
   jobExperience: Record<string, number>;
   hasAskedPromotionThisYear: boolean;
+  hasWorkedThisYear: boolean;
+
+  partTimeJobId: string;
+  partTimeJob: string;
+  partTimeSalary: number;
 
   pendingLifeEvent: LifeChoiceEvent | null;
   popupMessage: string | null;
@@ -244,10 +252,14 @@ export type LifeStats = {
   familyRelationship: number;
   friendships: number;
   socialCircle: number;
+  familyMembers: string[];
+  friendsList: string[];
   relationshipStatus: string;
   partnerName: string;
   relationshipQuality: number;
+  relationshipStartedAge: number | null;
   children: number;
+  childrenNames: string[];
 
   currentHousing: HousingStatus;
   ownedCars: OwnedAsset[];
@@ -371,6 +383,7 @@ export type Job = {
   nextJobId?: string;
   track: SkillId;
   salary: number;
+  employmentType?: "fullTime" | "partTime";
   requiredSkill: number;
   requiredEducationLevel: number;
   requiredDegree?: string;
