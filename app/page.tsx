@@ -27,6 +27,7 @@ import {
   trainEmployees,
   cutCosts,
   seekInvestor,
+  selectBusiness,
   launchProduct,
   getBusinessRiskLabel,
   getBusinessStageName,
@@ -56,6 +57,7 @@ import {
   getEconomyBreakdown,
   getHousingCost,
   getItemValue,
+  getLoanLimit,
   focusAtWork,
   workPartTimeJobs,
   takeVacation,
@@ -82,6 +84,7 @@ import {
   makeFriends,
   marketingCampaign,
   moveOut,
+  networkAtWork,
   payDebt,
   proposeMarriage,
   renovateHome,
@@ -114,6 +117,7 @@ import type {
   LifeGrowthActionCategory,
   LifeStats,
   OwnedAsset,
+  OwnedBusiness,
   Origin,
   RentPriceLevel,
   SchoolCategory,
@@ -375,6 +379,8 @@ function normalizeLife(savedLife: LifeStats): LifeStats {
     businessManagement: savedLife.businessManagement ?? (savedLife.business && savedLife.business !== "None" ? 10 : 0),
     businessPayroll: savedLife.businessPayroll || 0,
     businessOwnership: savedLife.businessOwnership || 100,
+    businesses: savedLife.businesses || [],
+    activeBusinessId: savedLife.activeBusinessId || "",
     businessesStarted: savedLife.businessesStarted || 0,
 
     lifetimeMilestones: savedLife.lifetimeMilestones || [],
@@ -556,10 +562,6 @@ export default function Home() {
         />
       )}
 
-      {life.lastYearRecap && !life.pendingLifeEvent && (
-        <YearRecapCard life={life} />
-      )}
-
       <div className="mt-5 lg:mt-6">
         {activeTab === "life" && (
           <LifeDashboard
@@ -704,7 +706,7 @@ function DesktopSidebar({
   ];
 
   return (
-    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-[228px] shrink-0 flex-col border-r border-zinc-900/90 bg-black/35 px-3 py-4 backdrop-blur-xl lg:flex xl:w-[238px]">
+    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-[258px] shrink-0 flex-col border-r border-zinc-900/90 bg-black/35 px-3 py-4 backdrop-blur-xl lg:flex xl:w-[270px]">
       <button
         onClick={onLogoHome}
         className="flex w-full items-center gap-3 rounded-2xl px-2 py-2 text-left transition hover:bg-zinc-900/70 active:scale-[0.99]"
@@ -713,7 +715,7 @@ function DesktopSidebar({
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-orange-500/40 bg-orange-500/10 text-lg shadow-lg shadow-orange-500/10">
           ⚡
         </div>
-        <p className="min-w-0 truncate text-base font-black uppercase tracking-[0.14em] text-white">
+        <p className="whitespace-nowrap text-base font-black uppercase tracking-[0.10em] text-white">
           Charged<span className="text-orange-500">Life</span>
         </p>
       </button>
@@ -929,7 +931,13 @@ function GoalRow({
       </div>
       <div className="flex items-center gap-2">
         {progress && <span className="text-xs font-black text-zinc-500">{progress}</span>}
-        <div className="h-5 w-5 rounded-md border border-zinc-700" />
+        <div className={`grid h-5 w-5 place-items-center rounded-md border ${
+          progress === "Done"
+            ? "border-green-500/40 bg-green-500/15 text-[10px] text-green-300"
+            : "border-zinc-700"
+        }`}>
+          {progress === "Done" ? "✓" : ""}
+        </div>
       </div>
     </div>
   );
@@ -966,14 +974,14 @@ function LifeDashboard({
           <div className="grid gap-3 md:grid-cols-3">
             <OpportunityCard
               icon="💼"
-              title={hasJob ? "Work a Shift" : "Apply for Part-Time Job"}
+              title={hasJob ? "Build Career Performance" : "Apply for Part-Time Job"}
               description={
                 hasJob
-                  ? "Use one action to earn income and build experience."
+                  ? "Salary pays yearly now. Use actions to build promotion progress."
                   : "Build experience, earn consistent income, and take your first step forward."
               }
-              reward={hasJob ? `Reward: ${formatMoney(getWorkPayPerClick(life))}` : "Reward: Steady Income"}
-              buttonLabel={hasJob ? "Go Work" : "Take Action"}
+              reward={hasJob ? "Reward: Career XP" : "Reward: Steady Income"}
+              buttonLabel={hasJob ? "Improve" : "Take Action"}
               onClick={() => onOpenActions(hasJob ? "career" : "apply")}
             />
             <OpportunityCard
@@ -999,7 +1007,7 @@ function LifeDashboard({
           </div>
         </DashboardPanel>
 
-        <BusinessInvestmentsPanel life={life} onOpenTab={onOpenTab} />
+        <BusinessInvestmentsPanel life={life} onOpenActions={onOpenActions} />
       </div>
 
       <div className="grid gap-4 xl:grid-cols-2">
@@ -1097,15 +1105,18 @@ function OpportunityCard({
 
 function BusinessInvestmentsPanel({
   life,
-  onOpenTab,
+  onOpenActions,
 }: {
   life: LifeStats;
-  onOpenTab: (tab: ActiveTab) => void;
+  onOpenActions: (page: ActionPage) => void;
 }) {
   const hasBusiness = life.business !== "None";
+  const stageName = getBusinessStageName(life.businessStage);
+  const riskLabel = getBusinessRiskLabel(life.businessRisk);
+  const businessType = getBusinessTypeById(life.businessTypeId);
 
   return (
-    <DashboardPanel title="Business & Investments" icon="2" action="Coming Soon" iconMode="number">
+    <DashboardPanel title="Business & Investments" icon="2" action={hasBusiness ? stageName : "Start"} iconMode="number">
       <div className="rounded-[1.35rem] border border-zinc-800/70 bg-[radial-gradient(circle_at_right,rgba(249,115,22,0.12),transparent_38%),linear-gradient(135deg,rgba(39,39,42,0.34),rgba(0,0,0,0.20))] p-4">
         <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_170px] lg:items-center">
           <div>
@@ -1114,64 +1125,90 @@ function BusinessInvestmentsPanel({
             </p>
             <p className="mt-2 max-w-xl text-xs leading-5 text-zinc-400">
               {hasBusiness
-                ? `Your company is worth ${formatMoney(life.businessValue)} with ${life.businessEmployees} employee(s). Keep building revenue and reduce risk over time.`
-                : "Your empire starts with a single decision. Business gameplay will expand into startups, products, teams, investors, and exits."}
+                ? `${businessType?.category || "Business"} • ${stageName}. Value ${formatMoney(life.businessValue)}, revenue base ${formatMoney(life.businessRevenue)}, risk ${riskLabel}.`
+                : "Choose a business type in the Money tab and start building a scalable company."}
             </p>
           </div>
           <div className="hidden h-24 rounded-3xl border border-orange-500/20 bg-black/25 p-4 lg:block">
             <div className="flex h-full items-end gap-2">
-              {[24, 42, 32, 58, 74].map((height, index) => (
-                <div key={index} className="flex-1 rounded-t-lg bg-orange-500/70" style={{ height: `${height}%` }} />
+              {[
+                hasBusiness ? Math.max(12, life.businessProductQuality || 0) : 12,
+                hasBusiness ? Math.max(12, life.businessBrand || 0) : 24,
+                hasBusiness ? Math.max(12, life.businessManagement || 0) : 18,
+                hasBusiness ? Math.max(12, Math.min(100, life.businessEmployees * 12)) : 32,
+                hasBusiness ? Math.max(12, 100 - life.businessRisk) : 44,
+              ].map((height, index) => (
+                <div key={index} className="flex-1 rounded-t-lg bg-orange-500/70" style={{ height: `${Math.min(100, height)}%` }} />
               ))}
-              <span className="ml-2 text-3xl">📈</span>
+              <span className="ml-2 text-3xl">{hasBusiness ? "🚀" : "📈"}</span>
             </div>
           </div>
         </div>
       </div>
 
-      <div className="mt-3 grid gap-3 md:grid-cols-2">
-        <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
-            Potential Income Streams
-          </p>
-          <div className="mt-3 space-y-2.5">
-            {[
-              ["Online Business", 18],
-              ["E-Commerce Store", 10],
-              ["Content Creation", 15],
-              ["Real Estate", 8],
-              ["Investments", 22],
-            ].map(([label, width]) => (
-              <div key={label as string} className="grid grid-cols-[1fr_76px] items-center gap-2">
-                <div className="flex items-center gap-2 text-xs font-bold text-zinc-300">
-                  <span className="text-orange-400">●</span>
-                  <span>{label}</span>
-                </div>
-                <div className="h-1.5 overflow-hidden rounded-full bg-zinc-900">
-                  <div className="h-full rounded-full bg-orange-500/70" style={{ width: `${width}%` }} />
-                </div>
-              </div>
-            ))}
+      {hasBusiness ? (
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
+              Company Metrics
+            </p>
+            <div className="mt-3 grid grid-cols-2 gap-2">
+              <MiniAssetStat label="Quality" value={`${life.businessProductQuality || 0}/100`} />
+              <MiniAssetStat label="Brand" value={`${life.businessBrand || 0}/100`} />
+              <MiniAssetStat label="Manage" value={`${life.businessManagement || 0}/100`} />
+              <MiniAssetStat label="Owner" value={`${life.businessOwnership || 100}%`} />
+            </div>
           </div>
-        </div>
 
-        <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
-          <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
-            Startup Ideas
-          </p>
-          <div className="mt-3 space-y-2.5 text-sm font-bold text-zinc-300">
-            <p>🟠 Eco-Friendly Product Brand</p>
-            <p>🟠 AI Productivity Tool</p>
-            <p>🟠 Digital Learning Platform</p>
+          <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
+              Next Move
+            </p>
+            <div className="mt-3 space-y-2 text-sm leading-5 text-zinc-400">
+              <p>Employees: <span className="font-black text-white">{life.businessEmployees}</span></p>
+              <p>Payroll: <span className="font-black text-white">{formatMoney(life.businessPayroll)}</span></p>
+              <p>Risk: <span className="font-black text-white">{riskLabel}</span></p>
+            </div>
+            <button
+              onClick={() => onOpenActions("money")}
+              className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+            >
+              Open Business Hub
+            </button>
           </div>
-          <button
-            onClick={() => onOpenTab("economy")}
-            className="mt-4 w-full rounded-2xl border border-zinc-800 bg-zinc-900/70 px-4 py-3 text-xs font-black text-zinc-400 transition hover:border-orange-500/50 hover:text-orange-300"
-          >
-            Explore Business Hub 🔒
-          </button>
         </div>
-      </div>
+      ) : (
+        <div className="mt-3 grid gap-3 md:grid-cols-2">
+          <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
+              Available Business Types
+            </p>
+            <div className="mt-3 space-y-2.5">
+              {businessTypes.slice(0, 5).map((type) => (
+                <div key={type.id} className="flex items-center justify-between gap-3">
+                  <span className="text-sm font-bold text-zinc-300">{type.name}</span>
+                  <span className="text-xs font-black text-orange-300">{formatMoney(type.startCost)}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
+              Start Here
+            </p>
+            <p className="mt-3 text-sm leading-6 text-zinc-400">
+              Go to Money → Business & Investing to choose Online Store, Marketing Agency, Game Studio, Minecraft Server, Roblox Game, and more.
+            </p>
+            <button
+              onClick={() => onOpenActions("money")}
+              className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+            >
+              Open Money Actions
+            </button>
+          </div>
+        </div>
+      )}
     </DashboardPanel>
   );
 }
@@ -1219,35 +1256,58 @@ function GoalsProgressPanel({ life }: { life: LifeStats }) {
 }
 
 function FinancialSnapshotPanel({ life, monthlyIncome }: { life: LifeStats; monthlyIncome: number }) {
-  const expenses = Math.max(0, getHousingCost(life) + getAssetUpkeep(life));
-  const savings = Math.max(0, monthlyIncome - Math.round(expenses / 12));
-  const savingsRate = monthlyIncome > 0 ? Math.max(0, Math.min(100, Math.round((savings / monthlyIncome) * 100))) : 0;
-  const chart = [20, 38, 45, 62, 70, 86];
+  const yearlySalary = life.jobId === "unemployed" ? 0 : life.salary;
+  const yearlyPassive =
+    getRentalIncomeEstimate(life) +
+    getPartTimeIncome(life) +
+    (life.business !== "None" ? Math.floor(life.businessRevenue * 0.25) : 0);
+  const yearlyExpenses =
+    getHousingCost(life) +
+    getAssetUpkeep(life) +
+    getDebtInterest(life) +
+    (life.business !== "None" ? life.businessPayroll || 0 : 0);
+  const yearlyIncome = yearlySalary + yearlyPassive;
+  const yearlySavings = yearlyIncome - yearlyExpenses;
+  const monthlyNet = Math.round(yearlySavings / 12);
+  const savingsRate =
+    yearlyIncome > 0 ? Math.max(0, Math.min(100, Math.round((yearlySavings / yearlyIncome) * 100))) : 0;
+  const chart = [
+    Math.max(8, Math.min(100, savingsRate)),
+    Math.max(8, Math.min(100, Math.round((life.cash / Math.max(1, life.netWorth || 1)) * 100))),
+    Math.max(8, Math.min(100, 100 - (life.stress || 35))),
+    Math.max(8, Math.min(100, life.reputation)),
+    Math.max(8, Math.min(100, life.happiness)),
+    Math.max(8, Math.min(100, life.health)),
+  ];
 
   return (
-    <DashboardPanel title="Financial Snapshot" icon="3" action="This Year⌄" iconMode="number">
-      <div className="grid gap-4 lg:grid-cols-[150px_minmax(0,1fr)]">
+    <DashboardPanel title="Financial Snapshot" icon="3" action="Live data" iconMode="number">
+      <div className="grid gap-4 lg:grid-cols-[170px_minmax(0,1fr)]">
         <div className="grid grid-cols-2 gap-3 lg:grid-cols-1">
-          <FinanceMini label="Income" value={formatMoney(monthlyIncome)} tone="green" />
-          <FinanceMini label="Expenses" value={formatMoney(Math.round(expenses / 12))} tone="red" />
-          <FinanceMini label="Savings" value={formatMoney(savings)} tone="blue" />
+          <FinanceMini label="Yearly Income" value={formatMoney(yearlyIncome)} tone="green" />
+          <FinanceMini label="Yearly Expenses" value={formatMoney(yearlyExpenses)} tone="red" />
+          <FinanceMini label="Monthly Net" value={formatMoney(monthlyNet)} tone="blue" />
           <FinanceMini label="Debt" value={formatMoney(life.debt)} tone="purple" />
         </div>
 
         <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-zinc-500">Cash Flow</p>
-            <p className="text-xs font-black text-green-400">Savings {savingsRate}%</p>
+            <p className={`text-xs font-black ${yearlySavings >= 0 ? "text-green-400" : "text-red-400"}`}>
+              {yearlySavings >= 0 ? "Savings" : "Deficit"} {savingsRate}%
+            </p>
           </div>
           <div className="flex h-24 items-end gap-2 border-b border-l border-zinc-800/80 px-2 pb-2">
             {chart.map((height, index) => (
               <div key={index} className="flex flex-1 flex-col items-center gap-2">
-                <div className="w-full rounded-t-lg bg-green-500/75" style={{ height: `${height}%` }} />
-                <span className="text-[10px] text-zinc-600">{["Jan", "Feb", "Mar", "Apr", "May", "Jun"][index]}</span>
+                <div className={`w-full rounded-t-lg ${yearlySavings >= 0 ? "bg-green-500/75" : "bg-red-500/75"}`} style={{ height: `${height}%` }} />
+                <span className="text-[10px] text-zinc-600">{["Save", "Cash", "Stress", "Rep", "Happy", "Health"][index]}</span>
               </div>
             ))}
           </div>
-          <button className="mt-4 text-xs font-black text-orange-400">View Detailed Finances →</button>
+          <p className="mt-4 text-xs leading-5 text-zinc-400">
+            Full-time salary now pays automatically when you advance to the next year.
+          </p>
         </div>
       </div>
     </DashboardPanel>
@@ -1255,17 +1315,19 @@ function FinancialSnapshotPanel({ life, monthlyIncome }: { life: LifeStats; mont
 }
 
 function FinanceMini({ label, value, tone }: { label: string; value: string; tone: "green" | "red" | "blue" | "purple" }) {
-  const colors = {
-    green: "text-green-400",
-    red: "text-red-400",
-    blue: "text-blue-400",
-    purple: "text-purple-400",
-  };
+  const color =
+    tone === "green"
+      ? "text-green-400"
+      : tone === "red"
+        ? "text-red-400"
+        : tone === "blue"
+          ? "text-blue-400"
+          : "text-purple-400";
 
   return (
-    <div className="rounded-2xl bg-black/25 p-2.5">
-      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">{label}</p>
-      <p className={`mt-1 text-lg font-black ${colors[tone]}`}>{value}</p>
+    <div className="rounded-2xl bg-black/30 p-3">
+      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-500">{label}</p>
+      <p className={`mt-1 text-lg font-black ${color}`}>{value}</p>
     </div>
   );
 }
@@ -1693,6 +1755,8 @@ function ActionsRouter({
   setSelectedAssetCategory: (category: AssetCategory) => void;
   updateLife: (life: LifeStats) => void;
 }) {
+  const [financePanel, setFinancePanel] = useState<"none" | "payDebt" | "takeLoan">("none");
+
   if (actionPage === "lifeGrowth" || actionPage === "selfImprovement") {
     return (
       <ActionSubPage title="Life & Growth" onBack={() => setActionPage("main")}>
@@ -1988,7 +2052,7 @@ function ActionsRouter({
                 <p className="mt-2 max-w-2xl text-sm leading-6 text-zinc-400">
                   {life.job === "Unemployed"
                     ? "Start with part-time jobs, improve your skills, or apply for a full-time role."
-                    : `Salary: ${formatMoney(life.salary)}/year • Work pay: ${formatMoney(getWorkPayPerClick(life))}/action.`}
+                    : `Salary: ${formatMoney(life.salary)}/year pays automatically when you advance to next year.`}
                 </p>
               </div>
               <button
@@ -2033,19 +2097,19 @@ function ActionsRouter({
         <div className="mt-5 grid gap-4 xl:grid-cols-3">
           <CareerActionCard
             icon="💼"
-            title="Work Full-Time"
+            title={life.job === "Unemployed" ? "Do Odd Jobs" : "Improve Performance"}
             description={
               life.job === "Unemployed"
                 ? "Do basic odd jobs for quick cash while unemployed."
-                : `Work as ${life.job}. Builds XP, cash, and career progress.`
+                : "Salary is automatic yearly. Use this to build promotion progress and career XP."
             }
-            onClick={() => updateLife(work(life))}
+            onClick={() => updateLife(life.job === "Unemployed" ? work(life) : focusAtWork(life))}
           />
           <CareerActionCard
-            icon="📈"
-            title="Focus at Work"
-            description="Push performance and build promotion progress. Adds some stress."
-            onClick={() => updateLife(focusAtWork(life))}
+            icon="🤝"
+            title="Network at Work"
+            description="Build charisma, reputation, and workplace relationships with low stress."
+            onClick={() => updateLife(networkAtWork(life))}
           />
           <CareerActionCard
             icon="⭐"
@@ -2229,170 +2293,218 @@ function ActionsRouter({
     const businessType = getBusinessTypeById(life.businessTypeId);
     const businessStageName = getBusinessStageName(life.businessStage);
     const riskLabel = getBusinessRiskLabel(life.businessRisk);
+    const ownedBusinesses = life.businesses || [];
+    const investmentGuide =
+      life.skills.finance >= 5
+        ? "Strong finance skill. Better odds."
+        : life.intelligence >= 60
+          ? "Good intelligence. Decent odds."
+          : "Risky until finance/intelligence improves.";
 
     return (
       <ActionSubPage
         title="Business & Investing"
         onBack={() => setActionPage("main")}
       >
-        <div className="grid gap-4 xl:grid-cols-[1.15fr_0.85fr]">
-          <div className="rounded-[2rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.15),transparent_34%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-5">
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-400">
-              Business Empire
-            </p>
-            <h3 className="mt-2 text-3xl font-black text-white">
-              {hasBusiness ? life.business : "Start your first business"}
-            </h3>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-              {hasBusiness
-                ? `${businessType?.description || "Build revenue, value, employees, brand, and long-term wealth."}`
-                : "Choose a business type and start building a scalable path to success."}
-            </p>
-
-            <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-              <MainStat label="Cash" value={formatMoney(life.cash)} />
-              <MainStat label="Business Value" value={formatMoney(life.businessValue)} />
-              <MainStat label="Stage" value={businessStageName} />
-              <MainStat label="Risk" value={`${riskLabel} (${life.businessRisk}/100)`} />
+        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+          <div className="rounded-[1.6rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_34%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                  Business Hub
+                </p>
+                <h3 className="mt-1 text-2xl font-black text-white">
+                  {hasBusiness ? life.business : "No active business"}
+                </h3>
+                <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-400">
+                  {hasBusiness
+                    ? `${businessType?.category || "Business"} • ${businessStageName} • ${riskLabel} risk. Use actions to improve quality, brand, revenue, and management.`
+                    : "Start one or more businesses. You can own multiple companies and choose which one to manage."}
+                </p>
+              </div>
+              <span className="rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-xs font-black text-orange-300">
+                {ownedBusinesses.length} owned
+              </span>
             </div>
+
+            <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+              <MainStat label="Cash" value={formatMoney(life.cash)} />
+              <MainStat label="Value" value={formatMoney(life.businessValue)} />
+              <MainStat label="Revenue" value={formatMoney(life.businessRevenue)} />
+              <MainStat label="Risk" value={`${life.businessRisk}/100`} />
+            </div>
+
+            {ownedBusinesses.length > 0 && (
+              <div className="mt-4">
+                <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
+                  Your Businesses
+                </p>
+                <div className="grid gap-2 md:grid-cols-2">
+                  {ownedBusinesses.map((business) => (
+                    <BusinessPortfolioCard
+                      key={business.id}
+                      business={business}
+                      active={business.id === life.activeBusinessId}
+                      onClick={() => updateLife(selectBusiness(life, business.id))}
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950/80 p-5">
-            <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-400">
+          <div className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+            <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
               Money Tools
             </p>
-            <h3 className="mt-2 text-2xl font-black text-white">Personal finance</h3>
-            <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Manage debt and take risky money plays outside your business.
+            <h3 className="mt-1 text-2xl font-black text-white">Personal finance</h3>
+            <p className="mt-1 text-sm leading-6 text-zinc-400">
+              Keep this compact: choose an action first, then choose the amount.
             </p>
 
-            <div className="mt-4 grid gap-3 sm:grid-cols-2">
-              <ActionButton
-                title="Pay Debt"
-                description="Pays up to $10,000 toward debt."
-                onClick={() => updateLife(payDebt(life))}
-              />
-              <ActionButton
-                title="Take Loan"
-                description="Borrow money now, but debt grows with yearly interest."
-                onClick={() => updateLife(takeLoan(life))}
-              />
-              <ActionButton
+            <div className="mt-4 grid gap-2 sm:grid-cols-2">
+              <button
+                onClick={() => setFinancePanel(financePanel === "payDebt" ? "none" : "payDebt")}
+                className="rounded-2xl border border-zinc-800 bg-black/25 p-4 text-left transition hover:border-orange-400/60"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-black text-white">Pay Debt</p>
+                  <span className="text-xs font-black text-red-300">{formatMoney(life.debt)}</span>
+                </div>
+                <p className="mt-1 text-sm text-zinc-400">Pay a percent of your debt.</p>
+              </button>
+
+              <button
+                onClick={() => setFinancePanel(financePanel === "takeLoan" ? "none" : "takeLoan")}
+                className="rounded-2xl border border-zinc-800 bg-black/25 p-4 text-left transition hover:border-orange-400/60"
+              >
+                <div className="flex items-center justify-between gap-3">
+                  <p className="font-black text-white">Take Loan</p>
+                  <span className="text-xs font-black text-orange-300">{formatMoney(getLoanLimit(life))}</span>
+                </div>
+                <p className="mt-1 text-sm text-zinc-400">Borrow based on yearly income.</p>
+              </button>
+            </div>
+
+            {financePanel === "payDebt" && (
+              <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-3">
+                <p className="text-sm font-black text-red-100">How much debt do you want to pay?</p>
+                <div className="mt-3 grid grid-cols-4 gap-2">
+                  {[10, 25, 50, 100].map((percent) => (
+                    <button
+                      key={percent}
+                      onClick={() => updateLife(payDebt(life, percent))}
+                      className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
+                    >
+                      {percent}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {financePanel === "takeLoan" && (
+              <div className="mt-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3">
+                <p className="text-sm font-black text-orange-100">How much do you want to borrow?</p>
+                <p className="mt-1 text-xs text-zinc-400">Based on yearly salary/income profile.</p>
+                <div className="mt-3 grid grid-cols-4 gap-2">
+                  {[25, 50, 100, 200].map((percent) => (
+                    <button
+                      key={percent}
+                      onClick={() => updateLife(takeLoan(life, percent))}
+                      className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
+                    >
+                      {percent}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            <div className="mt-3 grid gap-2 sm:grid-cols-2">
+              <BusinessActionCard
+                icon="📈"
                 title="Invest"
-                description="Use finance, intelligence, and luck to grow money."
+                description={`Uses finance, intelligence, and luck. ${investmentGuide}`}
                 onClick={() => updateLife(invest(life))}
               />
-              <ActionButton
+              <BusinessActionCard
+                icon="🎲"
                 title="Take Risk"
-                description="High risk, high reward."
+                description="A gambling-style money action. Big upside, but can lose cash and raise stress."
                 onClick={() => updateLife(takeRisk(life))}
               />
             </div>
           </div>
         </div>
 
-        {!hasBusiness ? (
-          <div className="mt-5 rounded-[2rem] border border-zinc-800 bg-zinc-950/80 p-5">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-400">
-                  Choose Business Type
-                </p>
-                <h3 className="mt-2 text-2xl font-black text-white">What do you want to build?</h3>
-                <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-                  Each business has different start cost, risk, difficulty, and upside.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-5 grid gap-4 md:grid-cols-2 xl:grid-cols-3">
-              {businessTypes.map((type) => (
-                <BusinessTypeCard
-                  key={type.id}
-                  type={type}
-                  canAfford={life.cash >= type.startCost}
-                  onClick={() => updateLife(startBusiness(life, type.id))}
-                />
-              ))}
+        <div className="mt-4 rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+          <div className="flex flex-wrap items-start justify-between gap-3">
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                Start Another Business
+              </p>
+              <h3 className="mt-1 text-2xl font-black text-white">Choose a business type</h3>
+              <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+                You can own multiple businesses. Starting a new one makes it the active business.
+              </p>
             </div>
           </div>
-        ) : (
-          <>
-            <div className="mt-5 grid gap-4 xl:grid-cols-3">
-              <BusinessMetricCard label="Revenue" value={formatMoney(life.businessRevenue)} helper="Yearly revenue base" />
-              <BusinessMetricCard label="Payroll" value={formatMoney(life.businessPayroll)} helper={`${life.businessEmployees} employee${life.businessEmployees === 1 ? "" : "s"}`} />
-              <BusinessMetricCard label="Ownership" value={`${life.businessOwnership || 100}%`} helper="Investor dilution" />
-              <BusinessMetricCard label="Product Quality" value={`${life.businessProductQuality || 0}/100`} helper="Better launches" />
-              <BusinessMetricCard label="Brand Strength" value={`${life.businessBrand || 0}/100`} helper="Marketing power" />
-              <BusinessMetricCard label="Management" value={`${life.businessManagement || 0}/100`} helper="Controls risk" />
-            </div>
 
-            <div className="mt-5 rounded-[2rem] border border-zinc-800 bg-zinc-950/80 p-5">
-              <p className="text-xs font-black uppercase tracking-[0.24em] text-orange-400">
-                Business Actions
-              </p>
-              <h3 className="mt-2 text-2xl font-black text-white">Build, scale, or exit</h3>
+          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+            {businessTypes.map((type) => (
+              <BusinessTypeCard
+                key={type.id}
+                type={type}
+                canAfford={life.cash >= type.startCost}
+                onClick={() => updateLife(startBusiness(life, type.id))}
+              />
+            ))}
+          </div>
+        </div>
 
-              <div className="mt-5 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-                <BusinessActionCard
-                  icon="🛠️"
-                  title="Work on Business"
-                  description="Grow value, revenue, quality, and management."
-                  onClick={() => updateLife(workOnBusiness(life))}
-                />
-                <BusinessActionCard
-                  icon="✨"
-                  title="Improve Product"
-                  description="Increase quality, lower risk, and improve value."
-                  onClick={() => updateLife(improveProduct(life))}
-                />
-                <BusinessActionCard
-                  icon="📣"
-                  title="Marketing Campaign"
-                  description="Grow brand and revenue, but risk can rise."
-                  onClick={() => updateLife(marketingCampaign(life))}
-                />
-                <BusinessActionCard
-                  icon="🚀"
-                  title="Launch Product"
-                  description="High upside launch. Can also fail badly."
-                  onClick={() => updateLife(launchProduct(life))}
-                />
-                <BusinessActionCard
-                  icon="👥"
-                  title="Hire Employee"
-                  description="Scale faster, but payroll and risk increase."
-                  onClick={() => updateLife(hireEmployee(life))}
-                />
-                <BusinessActionCard
-                  icon="🎓"
-                  title="Train Employees"
-                  description="Improve management and reduce long-term risk."
-                  onClick={() => updateLife(trainEmployees(life))}
-                />
-                <BusinessActionCard
-                  icon="✂️"
-                  title="Cut Costs"
-                  description="Reduce risk and improve control."
-                  onClick={() => updateLife(cutCosts(life))}
-                />
-                <BusinessActionCard
-                  icon="💼"
-                  title="Seek Investor"
-                  description="Raise cash but sell ownership."
-                  onClick={() => updateLife(seekInvestor(life))}
-                />
-              </div>
-
-              <div className="mt-4">
-                <ActionButton
-                  title="Sell Business"
-                  description="Take the exit and sell your current business for a market-based price."
-                  onClick={() => updateLife(sellBusiness(life))}
-                />
+        {hasBusiness && (
+          <div className="mt-4 rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                  Manage Active Business
+                </p>
+                <h3 className="mt-1 text-2xl font-black text-white">{life.business}</h3>
+                <p className="mt-1 text-sm leading-6 text-zinc-400">
+                  Improve quality to make launches safer. Build brand for marketing. Train management to control payroll and risk.
+                </p>
               </div>
             </div>
-          </>
+
+            <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+              <BusinessMetricCard label="Quality" value={`${life.businessProductQuality || 0}/100`} helper="Launch safety" />
+              <BusinessMetricCard label="Brand" value={`${life.businessBrand || 0}/100`} helper="Marketing power" />
+              <BusinessMetricCard label="Manage" value={`${life.businessManagement || 0}/100`} helper="Risk control" />
+              <BusinessMetricCard label="Payroll" value={formatMoney(life.businessPayroll)} helper={`${life.businessEmployees} staff`} />
+              <BusinessMetricCard label="Owner" value={`${life.businessOwnership || 100}%`} helper="Profit share" />
+              <BusinessMetricCard label="Stage" value={businessStageName} helper="Company size" />
+            </div>
+
+            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+              <BusinessActionCard icon="🛠️" title="Work on Business" description="General growth: value, revenue, quality, and management." onClick={() => updateLife(workOnBusiness(life))} />
+              <BusinessActionCard icon="✨" title="Improve Product" description="Improves quality and lowers risk over time." onClick={() => updateLife(improveProduct(life))} />
+              <BusinessActionCard icon="📣" title="Marketing Campaign" description="Builds brand and revenue. Can raise risk." onClick={() => updateLife(marketingCampaign(life))} />
+              <BusinessActionCard icon="🚀" title="Launch Product" description="High upside launch. Quality and brand improve odds." onClick={() => updateLife(launchProduct(life))} />
+              <BusinessActionCard icon="👥" title="Hire Employee" description="Scales faster, but payroll rises." onClick={() => updateLife(hireEmployee(life))} />
+              <BusinessActionCard icon="🎓" title="Train Employees" description="Improves management and reduces long-term risk." onClick={() => updateLife(trainEmployees(life))} />
+              <BusinessActionCard icon="✂️" title="Cut Costs" description="Reduces risk and improves control." onClick={() => updateLife(cutCosts(life))} />
+              <BusinessActionCard icon="💼" title="Seek Investor" description="Raise cash but sell ownership." onClick={() => updateLife(seekInvestor(life))} />
+            </div>
+
+            <div className="mt-3">
+              <ActionButton
+                title="Sell Active Business"
+                description="Sell the business you are currently managing. Other businesses stay owned."
+                onClick={() => updateLife(sellBusiness(life))}
+              />
+            </div>
+          </div>
         )}
       </ActionSubPage>
     );
@@ -3985,7 +4097,7 @@ function RecapStat({
 }
 
 function getGoalRows(life: LifeStats) {
-  const netWorthProgress = Math.min(100, Math.floor((life.netWorth / 10000) * 100));
+  const netWorthProgress = Math.max(0, Math.min(100, Math.floor((life.netWorth / 10000) * 100)));
   const propertyProgress = life.ownedHomes.length > 0 ? 100 : 0;
   const jobProgress = life.jobId !== "unemployed" ? 100 : 0;
   const degreeProgress =
@@ -4098,16 +4210,17 @@ function PopupCard({
   onClose: () => void;
 }) {
   return (
-    <div className="mt-4 rounded-3xl border border-orange-400 bg-zinc-950 p-5 shadow-xl shadow-orange-950/30">
-      <p className="text-xs font-black uppercase tracking-[0.25em] text-orange-400">
-        Message
-      </p>
-
-      <p className="mt-2 text-sm leading-6 text-zinc-200">{message}</p>
+    <div className="mt-3 flex items-center justify-between gap-4 rounded-2xl border border-orange-500/35 bg-orange-500/10 px-4 py-3 shadow-lg shadow-orange-950/20">
+      <div className="min-w-0">
+        <p className="text-[10px] font-black uppercase tracking-[0.22em] text-orange-400">
+          Message
+        </p>
+        <p className="mt-1 text-sm leading-5 text-zinc-200">{message}</p>
+      </div>
 
       <button
         onClick={onClose}
-        className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+        className="shrink-0 rounded-xl bg-orange-500 px-4 py-2 text-xs font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
       >
         Okay
       </button>
@@ -4405,99 +4518,75 @@ function TopSummary({
 
   return (
     <div className="sticky top-0 z-20 -mx-4 border-b border-zinc-900/80 bg-[#050505]/92 px-4 pb-3 pt-2 backdrop-blur-xl lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0">
-      <div className="overflow-hidden rounded-[1.45rem] border border-zinc-800/80 bg-gradient-to-br from-[#101217] via-[#090a0d] to-black p-3 shadow-2xl shadow-black/40">
-        <div className="grid gap-3 lg:grid-cols-[82px_minmax(0,1fr)_170px] lg:items-start">
-          <div className="hidden lg:block">
-            <div className="grid h-16 w-16 place-items-center rounded-full border border-orange-500/50 bg-orange-500/10 text-2xl shadow-[0_0_35px_rgba(249,115,22,0.18)]">
-              ⚡
+      <div className="overflow-hidden rounded-[1.25rem] border border-zinc-800/80 bg-gradient-to-br from-[#101217] via-[#090a0d] to-black p-3 shadow-2xl shadow-black/40">
+        <div className="flex items-center gap-3">
+          <div className="flex w-[230px] shrink-0 items-center gap-3">
+            <div className="shrink-0">
+              <div className="grid h-11 w-11 place-items-center rounded-full border border-orange-500/50 bg-orange-500/10 text-lg shadow-[0_0_25px_rgba(249,115,22,0.16)]">
+                ⚡
+              </div>
+              <div className="ml-1 mt-[-5px] inline-flex rounded-lg border border-orange-500/25 bg-orange-500/20 px-2 py-0.5 text-[8px] font-black uppercase text-orange-100">
+                Level 1
+              </div>
             </div>
-            <div className="ml-2 mt-[-8px] inline-flex rounded-xl border border-orange-500/25 bg-orange-500/20 px-2.5 py-0.5 text-[9px] font-black uppercase text-orange-100">
-              Level 1
+
+            <div className="min-w-0">
+              <p className="text-[9px] font-black uppercase tracking-[0.22em] text-orange-400">
+                Welcome Back
+              </p>
+              <h1 className="truncate text-lg font-black leading-tight tracking-tight">
+                {life.name}
+              </h1>
+              <p className="truncate text-xs font-medium text-zinc-400">
+                Age {life.age} • {life.job}
+              </p>
             </div>
           </div>
 
-          <div className="min-w-0">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <p className="text-[10px] font-black uppercase tracking-[0.32em] text-orange-400 lg:text-[11px]">
-                  Welcome Back
-                </p>
-                <h1 className="mt-1 truncate text-[1.55rem] font-black leading-none tracking-tight lg:text-2xl xl:text-[1.7rem]">
-                  {life.name}
-                </h1>
-                <p className="mt-1 text-sm font-medium text-zinc-400">
-                  Age {life.age} • {life.job}
-                </p>
-              </div>
-
-              <button
-                onClick={onRestart}
-                className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-3 py-2 text-xs font-black text-zinc-400 transition hover:border-red-400 hover:text-red-300 lg:hidden"
-              >
-                Reset
-              </button>
-            </div>
-
-            <div className="mt-3 hidden items-center gap-3 lg:flex">
-              <p className="whitespace-nowrap text-xs font-bold text-zinc-500">0 / 100 XP</p>
+          <div className="min-w-0 flex-1">
+            <div className="hidden items-center gap-3 lg:flex">
+              <p className="whitespace-nowrap text-[10px] font-bold text-zinc-500">0 / 100 XP</p>
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-900">
                 <div className="h-full w-[8%] rounded-full bg-orange-500" />
               </div>
             </div>
 
-            <div className="mt-3 grid grid-cols-3 gap-2 lg:grid-cols-5">
-              <MiniStat icon="💵" label="Cash" value={formatMoney(life.cash)} helper="+$250 this month" />
-              <MiniStat icon="📈" label="Net Worth" value={formatMoney(life.netWorth)} helper="$0 this month" />
+            <div className="mt-2 grid grid-cols-3 gap-2">
+              <MiniStat icon="💵" label="Cash" value={formatMoney(life.cash)} helper={life.salary > 0 ? `${formatMoney(life.salary)}/year salary` : "No salary yet"} />
+              <MiniStat icon="📈" label="Net Worth" value={formatMoney(life.netWorth)} helper="Total wealth" />
               <MiniStat icon="⚡" label="Actions Left" value={`${actionsLeft}/${ACTIONS_PER_YEAR}`} helper="Resets yearly" />
-              <MiniStat icon="⭐" label="Level" value="1" helper="0 / 100 XP" extraClass="hidden lg:block" />
-              <MiniStat icon="👥" label="Reputation" value={`${life.reputation}`} helper="Rookie" extraClass="hidden lg:block" />
             </div>
           </div>
 
-          <div className="hidden h-full flex-col justify-between gap-3 lg:flex">
-            <div className="text-right">
-              <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
-                Legacy Score
-              </p>
-              <p className="mt-1 text-2xl font-black text-orange-400">
-                {legacyScore.toLocaleString()}
-              </p>
-              <p className="text-xs font-bold text-zinc-500">⭐ Rising Star</p>
-            </div>
-            <button
-              onClick={onEndYear}
-              className={`rounded-2xl px-4 py-3 text-left text-white shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] ${
-                actionsFull
-                  ? "bg-orange-500 hover:bg-orange-400"
-                  : "bg-orange-600 hover:bg-orange-500"
-              }`}
-            >
-              <span className="flex items-center justify-between gap-3 text-base font-black">
-                <span>Next Year</span>
-                <span className="text-lg">→</span>
-              </span>
-              <span className="mt-1 block text-[11px] font-bold leading-4 text-orange-100/90">
-                {actionsFull
-                  ? "Ready — all actions used"
-                  : `${actionsLeft} action${actionsLeft === 1 ? "" : "s"} left this year`}
-              </span>
-            </button>
+          <div className="w-[104px] shrink-0 text-right">
+            <p className="text-[9px] font-black uppercase tracking-[0.14em] text-zinc-500">
+              Legacy
+            </p>
+            <p className="mt-0.5 text-lg font-black text-orange-400">
+              {legacyScore.toLocaleString()}
+            </p>
+            <p className="text-[10px] font-bold text-zinc-500">⭐ Rising</p>
           </div>
+
+          <button
+            onClick={onEndYear}
+            className={`w-[120px] shrink-0 rounded-2xl px-4 py-3 text-left text-white shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] ${
+              actionsFull
+                ? "bg-orange-500 hover:bg-orange-400"
+                : "bg-orange-600 hover:bg-orange-500"
+            }`}
+          >
+            <span className="flex items-center justify-between gap-2 text-sm font-black">
+              <span>Next Year</span>
+              <span>→</span>
+            </span>
+            <span className="mt-1 block text-[10px] font-bold leading-4 text-orange-100/90">
+              {actionsFull
+                ? "Ready"
+                : `${actionsLeft} left`}
+            </span>
+          </button>
         </div>
-
-        <button
-          onClick={onEndYear}
-          className={`mt-3 flex w-full items-center justify-center gap-3 rounded-2xl px-5 py-3 text-sm font-black text-black shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] lg:hidden ${
-            actionsFull
-              ? "bg-orange-400 hover:bg-orange-300"
-              : "bg-orange-500 hover:bg-orange-400"
-          }`}
-        >
-          <span>Next Year</span>
-          <span className="text-xs font-bold opacity-80">
-            {actionsFull ? "Ready" : `${actionsLeft} left`}
-          </span>
-        </button>
       </div>
     </div>
   );
@@ -4819,6 +4908,46 @@ function BottomNavigation({
   );
 }
 
+function BusinessPortfolioCard({
+  business,
+  active,
+  onClick,
+}: {
+  business: OwnedBusiness;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className={`rounded-2xl border p-3 text-left transition hover:border-orange-400/60 ${
+        active
+          ? "border-orange-500/50 bg-orange-500/10"
+          : "border-zinc-800 bg-black/25"
+      }`}
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div>
+          <p className="font-black text-white">{business.name}</p>
+          <p className="mt-1 text-xs text-zinc-500">
+            {getBusinessStageName(business.stage)} • Risk {business.risk}/100
+          </p>
+        </div>
+        {active && (
+          <span className="rounded-full bg-orange-500 px-2 py-1 text-[10px] font-black text-black">
+            Active
+          </span>
+        )}
+      </div>
+      <div className="mt-3 grid grid-cols-3 gap-2">
+        <MiniAssetStat label="Value" value={formatMoney(business.value)} />
+        <MiniAssetStat label="Rev" value={formatMoney(business.revenue)} />
+        <MiniAssetStat label="Staff" value={`${business.employees}`} />
+      </div>
+    </button>
+  );
+}
+
 function BusinessTypeCard({
   type,
   canAfford,
@@ -4831,37 +4960,37 @@ function BusinessTypeCard({
   return (
     <button
       onClick={onClick}
-      className={`rounded-[1.6rem] border p-5 text-left transition active:scale-[0.99] ${
+      className={`rounded-2xl border p-4 text-left transition active:scale-[0.99] ${
         canAfford
-          ? "border-zinc-800 bg-zinc-950/80 hover:-translate-y-0.5 hover:border-orange-400/60"
-          : "border-zinc-800 bg-zinc-950/40 opacity-70 hover:border-red-500/40"
+          ? "border-zinc-800 bg-black/25 hover:border-orange-400/60"
+          : "border-zinc-800 bg-black/20 opacity-70 hover:border-red-500/40"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
-        <span className="grid h-12 w-12 place-items-center rounded-2xl bg-orange-500/10 text-2xl">
+        <span className="grid h-10 w-10 place-items-center rounded-xl bg-orange-500/10 text-xl">
           {businessTypeIcon(type.id)}
         </span>
-        <span className="rounded-full bg-black/35 px-3 py-1 text-xs font-black text-orange-300">
+        <span className="rounded-full bg-zinc-950 px-2.5 py-1 text-xs font-black text-orange-300">
           {formatMoney(type.startCost)}
         </span>
       </div>
 
-      <h4 className="mt-4 text-xl font-black text-white">{type.name}</h4>
-      <p className="mt-1 text-xs font-black uppercase tracking-[0.16em] text-zinc-500">
+      <h4 className="mt-3 text-lg font-black text-white">{type.name}</h4>
+      <p className="mt-1 text-xs font-black uppercase tracking-[0.14em] text-zinc-500">
         {type.category}
       </p>
-      <p className="mt-3 min-h-[60px] text-sm leading-5 text-zinc-400">{type.description}</p>
+      <p className="mt-2 min-h-[54px] text-sm leading-5 text-zinc-400">{type.description}</p>
 
-      <div className="mt-4 grid grid-cols-3 gap-2">
+      <div className="mt-3 grid grid-cols-3 gap-2">
         <MiniAssetStat label="Risk" value={`${type.risk}/100`} />
-        <MiniAssetStat label="Difficulty" value={`${type.difficulty}/10`} />
+        <MiniAssetStat label="Diff" value={`${type.difficulty}/10`} />
         <MiniAssetStat label="Upside" value={`${Math.round(type.revenuePotential * 100)}%`} />
       </div>
 
-      <span className={`mt-4 block rounded-2xl px-4 py-3 text-center text-sm font-black ${
+      <span className={`mt-3 block rounded-xl px-3 py-2 text-center text-xs font-black ${
         canAfford ? "bg-orange-500 text-black" : "border border-red-500/30 bg-red-500/10 text-red-300"
       }`}>
-        {canAfford ? "Start Business" : "Need More Cash"}
+        {canAfford ? "Start" : "Need Cash"}
       </span>
     </button>
   );
@@ -4877,10 +5006,10 @@ function BusinessMetricCard({
   helper: string;
 }) {
   return (
-    <div className="rounded-[1.5rem] border border-zinc-800 bg-zinc-950/80 p-5">
-      <p className="text-[11px] font-black uppercase tracking-[0.18em] text-zinc-500">{label}</p>
-      <p className="mt-2 text-2xl font-black text-white">{value}</p>
-      <p className="mt-1 text-sm text-zinc-400">{helper}</p>
+    <div className="rounded-2xl border border-zinc-800 bg-black/25 p-3">
+      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">{label}</p>
+      <p className="mt-1 text-base font-black text-white">{value}</p>
+      <p className="mt-1 text-xs text-zinc-500">{helper}</p>
     </div>
   );
 }
@@ -4899,11 +5028,15 @@ function BusinessActionCard({
   return (
     <button
       onClick={onClick}
-      className="group rounded-[1.5rem] border border-zinc-800 bg-black/25 p-4 text-left transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-zinc-900 active:scale-[0.99]"
+      className="group rounded-2xl border border-zinc-800 bg-black/25 p-3 text-left transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-zinc-900 active:scale-[0.99]"
     >
-      <span className="grid h-11 w-11 place-items-center rounded-2xl bg-orange-500/10 text-xl">{icon}</span>
-      <p className="mt-4 font-black text-white">{title}</p>
-      <p className="mt-1 text-sm leading-5 text-zinc-400">{description}</p>
+      <div className="flex items-start gap-3">
+        <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-orange-500/10 text-lg">{icon}</span>
+        <span>
+          <span className="block text-sm font-black text-white">{title}</span>
+          <span className="mt-1 block text-xs leading-5 text-zinc-400">{description}</span>
+        </span>
+      </div>
     </button>
   );
 }

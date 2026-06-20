@@ -213,6 +213,22 @@ export type BusinessType = {
   description: string;
 };
 
+export type OwnedBusiness = {
+  id: string;
+  typeId: string;
+  name: string;
+  value: number;
+  stage: number;
+  employees: number;
+  revenue: number;
+  risk: number;
+  productQuality: number;
+  brand: number;
+  management: number;
+  payroll: number;
+  ownership: number;
+};
+
 export type StudentLoanStatus = "not_applied" | "approved" | "denied";
 
 export type EconomyBreakdown = {
@@ -320,6 +336,8 @@ export type LifeStats = {
   businessManagement: number;
   businessPayroll: number;
   businessOwnership: number;
+  businesses: OwnedBusiness[];
+  activeBusinessId: string;
   businessesStarted: number;
 
   lifetimeMilestones: string[];

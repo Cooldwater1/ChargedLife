@@ -10,7 +10,7 @@ import type {
 } from "./types";
 
 export const STORAGE_KEY = "chargedlife-save-v14";
-export const ACTIONS_PER_YEAR = 3;
+export const ACTIONS_PER_YEAR = 4;
 
 export const defaultOrigin: Origin = {
   country: "Norway",

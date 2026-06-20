@@ -145,6 +145,8 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     businessManagement: 0,
     businessPayroll: 0,
     businessOwnership: 100,
+    businesses: [],
+    activeBusinessId: "",
     businessesStarted: 0,
 
     lifetimeMilestones: [],

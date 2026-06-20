@@ -11,6 +11,7 @@ import type {
   LifeGrowthAction,
   LifeStats,
   OwnedAsset,
+  OwnedBusiness,
   PartTimeJob,
   RentPriceLevel,
   RentalEventType,
@@ -354,6 +355,79 @@ function getBusinessPayroll(life: LifeStats) {
   return Math.floor((life.businessEmployees || 0) * (12000 + Math.max(1, life.businessStage) * 2500));
 }
 
+function businessFromLife(life: LifeStats): OwnedBusiness | null {
+  if (life.business === "None" || !life.activeBusinessId) return null;
+
+  return {
+    id: life.activeBusinessId,
+    typeId: life.businessTypeId || "online-store",
+    name: life.business,
+    value: life.businessValue,
+    stage: life.businessStage,
+    employees: life.businessEmployees,
+    revenue: life.businessRevenue,
+    risk: life.businessRisk,
+    productQuality: life.businessProductQuality || 0,
+    brand: life.businessBrand || 0,
+    management: life.businessManagement || 0,
+    payroll: life.businessPayroll || 0,
+    ownership: life.businessOwnership || 100,
+  };
+}
+
+function applyBusinessToLife(life: LifeStats, business: OwnedBusiness | null): LifeStats {
+  if (!business) {
+    return {
+      ...life,
+      business: "None",
+      businessTypeId: "none",
+      businessValue: 0,
+      businessStage: 0,
+      businessEmployees: 0,
+      businessRevenue: 0,
+      businessRisk: 0,
+      businessProductQuality: 0,
+      businessBrand: 0,
+      businessManagement: 0,
+      businessPayroll: 0,
+      businessOwnership: 100,
+      activeBusinessId: "",
+    };
+  }
+
+  return {
+    ...life,
+    business: business.name,
+    businessTypeId: business.typeId,
+    businessValue: business.value,
+    businessStage: business.stage,
+    businessEmployees: business.employees,
+    businessRevenue: business.revenue,
+    businessRisk: business.risk,
+    businessProductQuality: business.productQuality,
+    businessBrand: business.brand,
+    businessManagement: business.management,
+    businessPayroll: business.payroll,
+    businessOwnership: business.ownership,
+    activeBusinessId: business.id,
+  };
+}
+
+function upsertActiveBusiness(life: LifeStats): LifeStats {
+  const active = businessFromLife(life);
+  if (!active) return { ...life, businesses: life.businesses || [] };
+
+  const businesses = life.businesses || [];
+  const exists = businesses.some((business) => business.id === active.id);
+
+  return {
+    ...life,
+    businesses: exists
+      ? businesses.map((business) => (business.id === active.id ? active : business))
+      : [...businesses, active],
+  };
+}
+
 function getBusinessStageFromValue(value: number) {
   if (value >= 5000000) return 6;
   if (value >= 1800000) return 5;
@@ -387,15 +461,19 @@ function normalizeBusiness(life: LifeStats): LifeStats {
       businessManagement: 0,
       businessPayroll: 0,
       businessOwnership: 100,
+      activeBusinessId: "",
+      businesses: life.businesses || [],
     };
   }
 
-  return {
+  return upsertActiveBusiness({
     ...life,
+    activeBusinessId: life.activeBusinessId || `business-${life.age}-${life.businessesStarted || 1}`,
     businessStage: getBusinessStageFromValue(life.businessValue),
     businessPayroll: getBusinessPayroll(life),
     businessOwnership: life.businessOwnership || 100,
-  };
+    businesses: life.businesses || [],
+  });
 }
 
 export function getCurrentJob(life: LifeStats) {
@@ -1196,6 +1274,30 @@ export function focusAtWork(life: LifeStats) {
     stress: changeStress(life, randomBetween(2, 5)),
     happiness: clamp(life.happiness - randomBetween(0, 2)),
     yearNotes: addYearNote(life, "You focused hard at work and improved your promotion chances."),
+  });
+}
+
+
+export function networkAtWork(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  if (life.jobId === "unemployed") {
+    return {
+      ...life,
+      popupMessage: "You need a job before networking at work.",
+      yearNotes: addYearNote(life, "You need a job before networking at work."),
+    };
+  }
+
+  return consumeAction({
+    ...life,
+    careerXp: life.careerXp + randomBetween(12, 24),
+    charisma: clamp(life.charisma + randomBetween(2, 5)),
+    reputation: clamp(life.reputation + randomBetween(1, 3)),
+    stress: changeStress(life, randomBetween(0, 2)),
+    happiness: clamp(life.happiness + randomBetween(0, 3)),
+    yearNotes: addYearNote(life, "You networked at work and built stronger career relationships."),
   });
 }
 
@@ -2159,7 +2261,7 @@ export function maintainAssets(life: LifeStats) {
   });
 }
 
-export function payDebt(life: LifeStats) {
+export function payDebt(life: LifeStats, percent = 25) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
@@ -2179,52 +2281,77 @@ export function payDebt(life: LifeStats) {
     };
   }
 
-  const payment = Math.min(life.cash, life.debt, 10000);
+  const safePercent = Math.max(5, Math.min(100, percent));
+  const targetPayment = Math.ceil(life.debt * (safePercent / 100));
+  const payment = Math.min(life.cash, life.debt, targetPayment);
 
   return consumeAction({
     ...life,
     cash: life.cash - payment,
     debt: life.debt - payment,
-    popupMessage: `You paid ${formatMoney(payment)} toward your debt.`,
-    yearNotes: addYearNote(life, `You paid ${formatMoney(payment)} toward your debt.`),
+    stress: changeStress(life, -Math.max(1, Math.floor(safePercent / 20))),
+    popupMessage: `You paid ${formatMoney(payment)} toward your debt (${safePercent}%).`,
+    yearNotes: addYearNote(life, `You paid ${formatMoney(payment)} toward your debt (${safePercent}%).`),
   });
 }
 
-export function takeLoan(life: LifeStats) {
+export function getLoanLimit(life: LifeStats) {
+  const salaryBase = Math.max(life.salary || 0, life.jobId === "unemployed" ? 12000 : 25000);
+  const reputationBonus = life.reputation * 350;
+  const educationBonus = life.educationLevel * 5000;
+  return Math.max(5000, Math.floor(salaryBase * 2 + reputationBonus + educationBonus));
+}
+
+export function takeLoan(life: LifeStats, percent = 25) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
-  const amount = 10000 + life.educationLevel * 2500;
-  const maxDebt = 250000 + life.reputation * 2500;
+  const maxDebt = getLoanLimit(life);
+  const remainingRoom = Math.max(0, maxDebt - life.debt);
 
-  if (life.debt >= maxDebt) {
+  if (remainingRoom <= 0) {
     return {
       ...life,
-      popupMessage: "The bank denied your loan. Your debt is too high.",
-      yearNotes: addYearNote(life, "The bank denied your loan."),
+      popupMessage: "The bank denied your loan. Your current debt is already too high compared to your income.",
+      yearNotes: addYearNote(life, "The bank denied your loan because your debt is too high compared to income."),
     };
   }
+
+  const safePercent = Math.max(10, Math.min(200, percent));
+  const salaryBase = Math.max(life.salary || 0, life.jobId === "unemployed" ? 12000 : 25000);
+  const requested = Math.floor(salaryBase * (safePercent / 100));
+  const amount = Math.min(remainingRoom, Math.max(1000, requested));
 
   return consumeAction({
     ...life,
     cash: life.cash + amount,
     debt: life.debt + amount,
-    popupMessage: `You took a loan for ${formatMoney(amount)}.`,
-    yearNotes: addYearNote(life, `You took a loan for ${formatMoney(amount)}.`),
+    stress: changeStress(life, Math.max(1, Math.floor(safePercent / 50))),
+    popupMessage: `You took a loan for ${formatMoney(amount)} (${safePercent}% of yearly income base).`,
+    yearNotes: addYearNote(life, `You took a loan for ${formatMoney(amount)} (${safePercent}% income base).`),
+  });
+}
+
+export function selectBusiness(life: LifeStats, businessId: string) {
+  const business = (life.businesses || []).find((item) => item.id === businessId);
+
+  if (!business) {
+    return {
+      ...life,
+      popupMessage: "That business could not be found.",
+      yearNotes: addYearNote(life, "That business could not be found."),
+    };
+  }
+
+  return recalc({
+    ...applyBusinessToLife(life, business),
+    popupMessage: `Now managing ${business.name}.`,
   });
 }
 
 export function startBusiness(life: LifeStats, typeId: string) {
   const blocked = noActions(life);
   if (blocked) return blocked;
-
-  if (life.business !== "None") {
-    return {
-      ...life,
-      popupMessage: "You already own a business. Sell it before starting another one.",
-      yearNotes: addYearNote(life, "You already own a business."),
-    };
-  }
 
   const businessType = getBusinessTypeById(typeId);
 
@@ -2251,27 +2378,38 @@ export function startBusiness(life: LifeStats, typeId: string) {
       life.reputation * 90
   );
 
-  return consumeAction({
-    ...life,
-    cash: life.cash - businessType.startCost,
-    business: businessType.name,
-    businessTypeId: businessType.id,
-    businessValue: Math.max(1000, startingValue),
-    businessStage: 1,
-    businessEmployees: 0,
-    businessRevenue: Math.floor(randomBetween(2000, 7000) * businessType.revenuePotential),
-    businessRisk: clamp(businessType.risk + randomBetween(-6, 8)),
-    businessProductQuality: clamp(18 + skillLevel * 7 + randomBetween(0, 12)),
-    businessBrand: clamp(12 + Math.floor(life.reputation / 4) + randomBetween(0, 8)),
-    businessManagement: clamp(10 + life.skills.business * 7 + randomBetween(0, 8)),
-    businessPayroll: 0,
-    businessOwnership: 100,
-    businessesStarted: life.businessesStarted + 1,
-    stress: changeStress(life, 5),
-    lifetimeMilestones: addMilestone(life, `Started ${businessType.name}`),
-    popupMessage: `You started ${businessType.name}.`,
-    yearNotes: addYearNote(life, `You started ${businessType.name}.`),
-  });
+  const businessId = `business-${life.age}-${life.businessesStarted + 1}-${randomBetween(1000, 9999)}`;
+
+  const newBusiness: OwnedBusiness = {
+    id: businessId,
+    typeId: businessType.id,
+    name: businessType.name,
+    value: Math.max(1000, startingValue),
+    stage: 1,
+    employees: 0,
+    revenue: Math.floor(randomBetween(2000, 7000) * businessType.revenuePotential),
+    risk: clamp(businessType.risk + randomBetween(-6, 8)),
+    productQuality: clamp(18 + skillLevel * 7 + randomBetween(0, 12)),
+    brand: clamp(12 + Math.floor(life.reputation / 4) + randomBetween(0, 8)),
+    management: clamp(10 + life.skills.business * 7 + randomBetween(0, 8)),
+    payroll: 0,
+    ownership: 100,
+  };
+
+  return consumeAction(
+    recalc({
+      ...applyBusinessToLife({
+        ...upsertActiveBusiness(life),
+        cash: life.cash - businessType.startCost,
+        businesses: [...(upsertActiveBusiness(life).businesses || []), newBusiness],
+        businessesStarted: life.businessesStarted + 1,
+        stress: changeStress(life, 5),
+        lifetimeMilestones: addMilestone(life, `Started ${businessType.name}`),
+        popupMessage: `You started ${businessType.name}.`,
+        yearNotes: addYearNote(life, `You started ${businessType.name}.`),
+      }, newBusiness),
+    })
+  );
 }
 
 export function workOnBusiness(life: LifeStats) {
@@ -2625,26 +2763,26 @@ export function sellBusiness(life: LifeStats) {
   }
 
   const price = Math.floor(life.businessValue * randomBetween(75, 115) * 0.01);
+  const remainingBusinesses = (life.businesses || []).filter(
+    (business) => business.id !== life.activeBusinessId
+  );
+  const nextBusiness = remainingBusinesses[0] || null;
 
-  return consumeAction({
-    ...life,
-    cash: life.cash + price,
-    business: "None",
-    businessTypeId: "none",
-    businessValue: 0,
-    businessStage: 0,
-    businessEmployees: 0,
-    businessRevenue: 0,
-    businessRisk: 0,
-    businessProductQuality: 0,
-    businessBrand: 0,
-    businessManagement: 0,
-    businessPayroll: 0,
-    businessOwnership: 100,
-    lifetimeMilestones: addMilestone(life, `Sold a business for ${formatMoney(price)}`),
-    popupMessage: `You sold your business for ${formatMoney(price)}.`,
-    yearNotes: addYearNote(life, `You sold your business for ${formatMoney(price)}.`),
-  });
+  return consumeAction(
+    recalc({
+      ...applyBusinessToLife(
+        {
+          ...life,
+          cash: life.cash + price,
+          businesses: remainingBusinesses,
+          lifetimeMilestones: addMilestone(life, `Sold a business for ${formatMoney(price)}`),
+          popupMessage: `You sold ${life.business} for ${formatMoney(price)}.`,
+          yearNotes: addYearNote(life, `You sold ${life.business} for ${formatMoney(price)}.`),
+        },
+        nextBusiness
+      ),
+    })
+  );
 }
 
 export function invest(life: LifeStats) {
@@ -3264,12 +3402,14 @@ export function endYear(life: LifeStats) {
   const businessPayroll = getBusinessPayroll(updated);
   const businessIncome = Math.floor((grossBusinessIncome - businessPayroll) * ((updated.businessOwnership || 100) / 100));
 
+  const yearlySalary = updated.jobId === "unemployed" ? 0 : Math.max(0, updated.salary || 0);
   const partTimeIncome = getPartTimeIncome(updated);
   const rentalIncomeBeforeCosts = getRentalIncomeEstimate(updated);
 
   updated = {
     ...updated,
-    cash: updated.cash + businessIncome + partTimeIncome,
+    cash: updated.cash + yearlySalary + businessIncome + partTimeIncome,
+    careerXp: updated.careerXp + (yearlySalary > 0 ? 12 : 0),
     businessPayroll,
     partTimeWorkUsedThisYear: false,
   };
@@ -3349,22 +3489,14 @@ export function endYear(life: LifeStats) {
     if (randomBetween(1, 100) <= failChance) {
       updated = {
         ...updated,
-        business: "None",
-        businessTypeId: "none",
-        businessValue: 0,
-        businessStage: 0,
-        businessEmployees: 0,
-        businessRevenue: 0,
-        businessRisk: 0,
-        businessProductQuality: 0,
-        businessBrand: 0,
-        businessManagement: 0,
-        businessPayroll: 0,
-        businessOwnership: 100,
-        happiness: clamp(updated.happiness - 12),
-        reputation: clamp(updated.reputation - 8),
-        popupMessage: "Your business collapsed because the risk became too high.",
-        eventLog: addLog(updated, "Business Failure: Your business collapsed because the risk became too high."),
+        businessValue: Math.max(1000, Math.floor(updated.businessValue * 0.55)),
+        businessRevenue: Math.max(0, Math.floor(updated.businessRevenue * 0.7)),
+        businessRisk: clamp(updated.businessRisk - randomBetween(15, 30)),
+        businessBrand: clamp((updated.businessBrand || 0) - randomBetween(5, 12)),
+        happiness: clamp(updated.happiness - 8),
+        reputation: clamp(updated.reputation - 5),
+        popupMessage: `${updated.business} survived a serious crisis, but lost value and revenue.`,
+        eventLog: addLog(updated, `Business Crisis: ${updated.business} survived a serious crisis but lost value and revenue.`),
       };
     }
   }
@@ -3420,7 +3552,7 @@ export function endYear(life: LifeStats) {
     ...updated,
     eventLog: addLog(
       updated,
-      `Age ${updated.age}: Business income ${formatMoney(businessIncome)}. Part-time income ${formatMoney(partTimeIncome)}. Rental income estimate ${formatMoney(rentalIncomeBeforeCosts)}.`
+      `Age ${updated.age}: Salary ${formatMoney(yearlySalary)}. Business income ${formatMoney(businessIncome)}. Part-time income ${formatMoney(partTimeIncome)}. Rental income estimate ${formatMoney(rentalIncomeBeforeCosts)}.`
     ),
     actionsLeft: ACTIONS_PER_YEAR,
     yearNotes: [],
@@ -3436,7 +3568,7 @@ export function endYear(life: LifeStats) {
   const finalLife = recalc(updated);
   const goalsCompleted = getYearGoalCompletions(before, finalLife);
   const newEvents = finalLife.eventLog.slice(previousLogLength).slice(0, 8);
-  const income = Math.max(0, businessIncome + partTimeIncome + rentalIncomeBeforeCosts);
+  const income = Math.max(0, yearlySalary + businessIncome + partTimeIncome + rentalIncomeBeforeCosts);
   const cashChange = finalLife.cash - before.cash;
   const estimatedExpenses = Math.max(0, income - cashChange);
 
