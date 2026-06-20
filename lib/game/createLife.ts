@@ -75,7 +75,7 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
         trait.reputationBonus -
         difficulty.statPenalty
     ),
-    stress: clamp(randomBetween(55, 78) + Math.floor(trait.disciplineBonus / 2)),
+    stress: clamp(randomBetween(20, 42) + difficulty.statPenalty),
 
     cash: startingCash,
     netWorth: startingCash,
@@ -103,11 +103,8 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     careerXp: 0,
     jobExperience: {},
     hasAskedPromotionThisYear: false,
-    hasWorkedThisYear: false,
-
-    partTimeJobId: "none",
-    partTimeJob: "None",
-    partTimeSalary: 0,
+    partTimeJobs: [],
+    partTimeWorkUsedThisYear: false,
 
     pendingLifeEvent: null,
     popupMessage: null,
@@ -115,14 +112,15 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     lastLifeEventId: "",
 
     familyRelationship: randomBetween(35, 75),
+    parentNames: {
+      mother: "Maria",
+      father: "Thomas",
+    },
     friendships: randomBetween(10, 45),
     socialCircle: randomBetween(0, 8),
-    familyMembers: ["Mother", "Father"],
-    friendsList: [],
     relationshipStatus: "Single",
     partnerName: "",
     relationshipQuality: 0,
-    relationshipStartedAge: null,
     children: 0,
     childrenNames: [],
 
@@ -133,19 +131,27 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     },
     ownedCars: [],
     ownedHomes: [],
+    ownedItems: [],
 
     business: "None",
+    businessTypeId: "none",
     businessValue: 0,
     businessStage: 0,
     businessEmployees: 0,
     businessRevenue: 0,
     businessRisk: 0,
+    businessProductQuality: 0,
+    businessBrand: 0,
+    businessManagement: 0,
+    businessPayroll: 0,
+    businessOwnership: 100,
     businessesStarted: 0,
 
     lifetimeMilestones: [],
 
     actionsLeft: ACTIONS_PER_YEAR,
     yearNotes: [],
+    lastYearRecap: null,
 
     yearsWorked: 0,
     yearsStudied: 0,

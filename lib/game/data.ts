@@ -9,7 +9,7 @@ import type {
   SkillDefinition,
 } from "./types";
 
-export const STORAGE_KEY = "chargedlife-save-v15";
+export const STORAGE_KEY = "chargedlife-save-v14";
 export const ACTIONS_PER_YEAR = 3;
 
 export const defaultOrigin: Origin = {
@@ -949,51 +949,6 @@ export const degreePrograms: DegreeProgram[] = [
 ];
 
 export const jobs: Job[] = [
-  {
-    id: "part-time-cafe",
-    title: "Part-Time Cafe Worker",
-    category: "partTime",
-    careerPath: "Part-Time",
-    track: "business",
-    salary: 12000,
-    employmentType: "partTime",
-    requiredSkill: 0,
-    requiredEducationLevel: 0,
-    requiredIntelligence: 10,
-    requiredCharisma: 10,
-    requiredDiscipline: 10,
-    requiredReputation: 0,
-  },
-  {
-    id: "part-time-tutor",
-    title: "Part-Time Tutor",
-    category: "partTime",
-    careerPath: "Part-Time",
-    track: "content",
-    salary: 18000,
-    employmentType: "partTime",
-    requiredSkill: 0,
-    requiredEducationLevel: 0,
-    requiredIntelligence: 45,
-    requiredCharisma: 20,
-    requiredDiscipline: 25,
-    requiredReputation: 0,
-  },
-  {
-    id: "part-time-delivery",
-    title: "Part-Time Delivery Driver",
-    category: "partTime",
-    careerPath: "Part-Time",
-    track: "business",
-    salary: 16000,
-    employmentType: "partTime",
-    requiredSkill: 0,
-    requiredEducationLevel: 0,
-    requiredIntelligence: 15,
-    requiredCharisma: 10,
-    requiredDiscipline: 20,
-    requiredReputation: 0,
-  },
   {
     id: "retail-worker",
     title: "Retail Worker",

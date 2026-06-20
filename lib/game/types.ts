@@ -11,7 +11,6 @@ export type SkillId =
 
 export type JobCategory =
   | "starter"
-  | "partTime"
   | "business"
   | "marketing"
   | "tech"
@@ -74,8 +73,8 @@ export type LifeEventEffect = {
   charismaGain?: number;
   disciplineGain?: number;
   reputationGain?: number;
-  stressGain?: number;
   luckGain?: number;
+  stressGain?: number;
   cashGain?: number;
   debtGain?: number;
   careerXpGain?: number;
@@ -100,6 +99,27 @@ export type LifeChoiceEvent = {
   acceptEffect: LifeEventEffect;
   declineEffect: LifeEventEffect;
   targetJobId?: string;
+};
+
+export type YearRecap = {
+  previousAge: number;
+  newAge: number;
+  cashBefore: number;
+  cashAfter: number;
+  cashChange: number;
+  netWorthBefore: number;
+  netWorthAfter: number;
+  netWorthChange: number;
+  stressBefore: number;
+  stressAfter: number;
+  stressChange: number;
+  happinessBefore: number;
+  happinessAfter: number;
+  happinessChange: number;
+  income: number;
+  expenses: number;
+  events: string[];
+  goalsCompleted: string[];
 };
 
 export type AssetCondition = "Excellent" | "Good" | "Fair" | "Poor" | "Bad";
@@ -128,7 +148,7 @@ export type PropertyManagerStatus = {
 export type OwnedAsset = {
   id: string;
   name: string;
-  type: "car" | "home";
+  type: "car" | "home" | "item";
   value: number;
   upkeep: number;
   happinessBonus: number;
@@ -149,6 +169,8 @@ export type OwnedAsset = {
   propertyManager?: PropertyManagerStatus;
 
   lastServicedAge?: number;
+  itemCategory?: "jewelry" | "clothing" | "collectible" | "luxury";
+  rarity?: "Common" | "Premium" | "Luxury" | "Legendary";
 };
 
 export type HousingType = "none" | "rent" | "own";
@@ -166,6 +188,28 @@ export type HousingOption = {
   yearlyCost: number;
   happinessBonus: number;
   reputationBonus: number;
+  description: string;
+};
+
+export type PartTimeJob = {
+  id: string;
+  name: string;
+  pay: number;
+  stressGain: number;
+  happinessCost: number;
+  disciplineGain: number;
+  description: string;
+};
+
+export type BusinessType = {
+  id: string;
+  name: string;
+  category: string;
+  startCost: number;
+  difficulty: number;
+  risk: number;
+  revenuePotential: number;
+  skill: SkillId;
   description: string;
 };
 
@@ -238,11 +282,8 @@ export type LifeStats = {
   careerXp: number;
   jobExperience: Record<string, number>;
   hasAskedPromotionThisYear: boolean;
-  hasWorkedThisYear: boolean;
-
-  partTimeJobId: string;
-  partTimeJob: string;
-  partTimeSalary: number;
+  partTimeJobs: string[];
+  partTimeWorkUsedThisYear: boolean;
 
   pendingLifeEvent: LifeChoiceEvent | null;
   popupMessage: string | null;
@@ -250,33 +291,42 @@ export type LifeStats = {
   lastLifeEventId: string;
 
   familyRelationship: number;
+  parentNames: {
+    mother: string;
+    father: string;
+  };
   friendships: number;
   socialCircle: number;
-  familyMembers: string[];
-  friendsList: string[];
   relationshipStatus: string;
   partnerName: string;
   relationshipQuality: number;
-  relationshipStartedAge: number | null;
   children: number;
   childrenNames: string[];
 
   currentHousing: HousingStatus;
   ownedCars: OwnedAsset[];
   ownedHomes: OwnedAsset[];
+  ownedItems: OwnedAsset[];
 
   business: string;
+  businessTypeId: string;
   businessValue: number;
   businessStage: number;
   businessEmployees: number;
   businessRevenue: number;
   businessRisk: number;
+  businessProductQuality: number;
+  businessBrand: number;
+  businessManagement: number;
+  businessPayroll: number;
+  businessOwnership: number;
   businessesStarted: number;
 
   lifetimeMilestones: string[];
 
   actionsLeft: number;
   yearNotes: string[];
+  lastYearRecap: YearRecap | null;
 
   yearsWorked: number;
   yearsStudied: number;
@@ -383,7 +433,6 @@ export type Job = {
   nextJobId?: string;
   track: SkillId;
   salary: number;
-  employmentType?: "fullTime" | "partTime";
   requiredSkill: number;
   requiredEducationLevel: number;
   requiredDegree?: string;
