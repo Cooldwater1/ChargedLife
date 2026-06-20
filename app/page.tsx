@@ -452,216 +452,427 @@ export default function Home() {
     );
   }
 
+  const content = (
+    <>
+      <TopSummary
+        life={life}
+        onRestart={restartLife}
+        onEndYear={handleEndYear}
+      />
+
+      {life.popupMessage && (
+        <PopupCard message={life.popupMessage} onClose={handleDismissPopup} />
+      )}
+
+      {life.pendingLifeEvent && (
+        <LifeEventCard
+          event={life.pendingLifeEvent}
+          onAccept={handleAcceptEvent}
+          onDecline={handleDeclineEvent}
+        />
+      )}
+
+      <div className="mt-5 lg:mt-6">
+        {activeTab === "life" && (
+          <TabCard title="Life Overview">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <MainStat label="Age" value={`${life.age}`} />
+              <MainStat label="Country" value={life.country} />
+              <MainStat label="Background" value={life.background} />
+              <MainStat label="Trait" value={life.trait} />
+              <MainStat label="Difficulty" value={life.difficulty} />
+              <MainStat label="Cash" value={formatMoney(life.cash)} />
+              <MainStat label="Net Worth" value={formatMoney(life.netWorth)} />
+              <MainStat label="Debt" value={formatMoney(life.debt)} />
+              <MainStat label="Job" value={life.job} />
+              <MainStat label="Housing" value={life.currentHousing.name} />
+              <MainStat label="Business" value={life.business} />
+              <MainStat label="Legacy" value={legacyScore.toLocaleString()} />
+              <MainStat label="Cars" value={`${life.ownedCars.length}`} />
+              <MainStat label="Homes" value={`${life.ownedHomes.length}`} />
+            </div>
+
+            <h3 className="mb-3 mt-6 text-lg font-black">Relationships</h3>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              <MainStat label="Family" value={`${life.familyRelationship}/100`} />
+              <MainStat label="Friends" value={`${life.friendships}/100`} />
+              <MainStat label="Social Circle" value={`${life.socialCircle}`} />
+              <MainStat label="Status" value={life.relationshipStatus} />
+              <MainStat label="Partner" value={life.partnerName || "None"} />
+              <MainStat label="Children" value={`${life.children}`} />
+            </div>
+          </TabCard>
+        )}
+
+        {activeTab === "stats" && (
+          <TabCard title="Stats & Skills">
+            <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-3">
+              <StatBar label="Health" value={life.health} />
+              <StatBar label="Happiness" value={life.happiness} />
+              <StatBar label="Intelligence" value={life.intelligence} />
+              <StatBar label="Charisma" value={life.charisma} />
+              <StatBar label="Discipline" value={life.discipline} />
+              <StatBar label="Luck" value={life.luck} />
+              <StatBar label="Reputation" value={life.reputation} />
+              <StatBar label="Family" value={life.familyRelationship} />
+              <StatBar label="Friends" value={life.friendships} />
+              <StatBar label="Relationship" value={life.relationshipQuality} />
+            </div>
+
+            <h3 className="mb-3 text-lg font-black">Skills</h3>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
+              {skills.map((skill) => (
+                <MainStat
+                  key={skill.id}
+                  label={skill.name}
+                  value={`Level ${life.skills[skill.id]}`}
+                />
+              ))}
+            </div>
+          </TabCard>
+        )}
+
+        {activeTab === "career" && (
+          <TabCard title="School & Career">
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <MainStat label="Education" value={life.education} />
+              <MainStat label="Active Degree" value={getDegreeName(life.activeDegreeId)} />
+              <MainStat label="Degree Progress" value={`${getDegreeProgress(life, life.activeDegreeId)}/100`} />
+              <MainStat label="Student Loan" value={life.studentLoanStatus.replace("_", " ")} />
+              <MainStat label="Loan Used" value={`${formatMoney(life.studentLoanUsed)}/${formatMoney(life.studentLoanLimit)}`} />
+              <MainStat label="Job" value={life.job} />
+              <MainStat label="Career Path" value={currentJob?.careerPath || "None"} />
+              <MainStat label="Job Experience" value={life.jobId === "unemployed" ? "None" : `${getCurrentJobExperience(life)}`} />
+              <MainStat label="Next Promotion" value={currentJob?.nextJobId ? getJobName(currentJob.nextJobId) : life.jobId === "unemployed" ? "Get a job first" : "Top role"} />
+              <MainStat label="Salary" value={formatMoney(life.salary)} />
+              <MainStat label="Work Pay" value={`${formatMoney(getWorkPayPerClick(life))}/click`} />
+            </div>
+
+            <h3 className="mb-3 mt-6 text-lg font-black">Business</h3>
+            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+              <MainStat label="Business" value={life.business} />
+              <MainStat label="Value" value={formatMoney(life.businessValue)} />
+              <MainStat label="Stage" value={`${life.businessStage}`} />
+              <MainStat label="Employees" value={`${life.businessEmployees}`} />
+              <MainStat label="Revenue" value={formatMoney(life.businessRevenue)} />
+              <MainStat label="Risk" value={`${life.businessRisk}/100`} />
+            </div>
+          </TabCard>
+        )}
+
+        {activeTab === "economy" && economy && <EconomyPage life={life} economy={economy} />}
+
+        {activeTab === "actions" && (
+          <TabCard title="Actions">
+            <ActionsRouter
+              life={life}
+              actionPage={actionPage}
+              setActionPage={setActionPage}
+              selectedJobCategory={selectedJobCategory}
+              setSelectedJobCategory={setSelectedJobCategory}
+              selectedSchoolCategory={selectedSchoolCategory}
+              setSelectedSchoolCategory={setSelectedSchoolCategory}
+              updateLife={updateLife}
+            />
+          </TabCard>
+        )}
+
+        {activeTab === "timeline" && (
+          <TabCard title="Story Timeline">
+            <StoryTimelinePanel life={life} />
+          </TabCard>
+        )}
+      </div>
+    </>
+  );
+
   return (
-    <main className="min-h-screen bg-[#090909] px-4 pb-28 pt-4 text-white">
-      <section className="mx-auto w-full max-w-md">
-        <TopSummary
+    <main className="min-h-screen overflow-x-hidden bg-[#050505] text-white selection:bg-orange-500 selection:text-black">
+      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,106,0,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(255,106,0,0.10),transparent_30%)]" />
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[1800px] gap-5 px-4 pb-28 pt-4 lg:px-6 lg:pb-8">
+        <DesktopSidebar
           life={life}
-          onRestart={restartLife}
-          onEndYear={handleEndYear}
+          activeTab={activeTab}
+          onChange={setActiveTab}
         />
 
-        {life.popupMessage && (
-          <PopupCard message={life.popupMessage} onClose={handleDismissPopup} />
-        )}
+        <section className="mx-auto w-full max-w-md lg:max-w-none lg:flex-1">
+          {content}
+        </section>
 
-        {life.pendingLifeEvent && (
-          <LifeEventCard
-            event={life.pendingLifeEvent}
-            onAccept={handleAcceptEvent}
-            onDecline={handleDeclineEvent}
-          />
-        )}
-
-        <div className="mt-4">
-          {activeTab === "life" && (
-            <TabCard title="Life Overview">
-              <div className="grid grid-cols-2 gap-3">
-                <MainStat label="Age" value={`${life.age}`} />
-                <MainStat label="Country" value={life.country} />
-                <MainStat label="Background" value={life.background} />
-                <MainStat label="Trait" value={life.trait} />
-                <MainStat label="Difficulty" value={life.difficulty} />
-                <MainStat label="Cash" value={formatMoney(life.cash)} />
-                <MainStat label="Net Worth" value={formatMoney(life.netWorth)} />
-                <MainStat label="Debt" value={formatMoney(life.debt)} />
-                <MainStat label="Job" value={life.job} />
-                <MainStat label="Housing" value={life.currentHousing.name} />
-                <MainStat label="Business" value={life.business} />
-                <MainStat label="Legacy" value={legacyScore.toLocaleString()} />
-                <MainStat label="Cars" value={`${life.ownedCars.length}`} />
-                <MainStat label="Homes" value={`${life.ownedHomes.length}`} />
-              </div>
-
-              <h3 className="mb-3 mt-6 text-lg font-black">Relationships</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <MainStat
-                  label="Family"
-                  value={`${life.familyRelationship}/100`}
-                />
-                <MainStat label="Friends" value={`${life.friendships}/100`} />
-                <MainStat label="Social Circle" value={`${life.socialCircle}`} />
-                <MainStat label="Status" value={life.relationshipStatus} />
-                <MainStat label="Partner" value={life.partnerName || "None"} />
-                <MainStat label="Children" value={`${life.children}`} />
-              </div>
-            </TabCard>
-          )}
-
-          {activeTab === "stats" && (
-            <TabCard title="Stats & Skills">
-              <div className="mb-5 grid grid-cols-2 gap-3">
-                <StatBar label="Health" value={life.health} />
-                <StatBar label="Happiness" value={life.happiness} />
-                <StatBar label="Intelligence" value={life.intelligence} />
-                <StatBar label="Charisma" value={life.charisma} />
-                <StatBar label="Discipline" value={life.discipline} />
-                <StatBar label="Luck" value={life.luck} />
-                <StatBar label="Reputation" value={life.reputation} />
-                <StatBar label="Family" value={life.familyRelationship} />
-                <StatBar label="Friends" value={life.friendships} />
-                <StatBar label="Relationship" value={life.relationshipQuality} />
-              </div>
-
-              <h3 className="mb-3 text-lg font-black">Skills</h3>
-              <div className="grid grid-cols-2 gap-3">
-                {skills.map((skill) => (
-                  <MainStat
-                    key={skill.id}
-                    label={skill.name}
-                    value={`Level ${life.skills[skill.id]}`}
-                  />
-                ))}
-              </div>
-            </TabCard>
-          )}
-
-          {activeTab === "career" && (
-            <TabCard title="School & Career">
-              <div className="grid grid-cols-2 gap-3">
-                <MainStat label="Education" value={life.education} />
-                <MainStat
-                  label="Active Degree"
-                  value={getDegreeName(life.activeDegreeId)}
-                />
-                <MainStat
-                  label="Degree Progress"
-                  value={`${getDegreeProgress(life, life.activeDegreeId)}/100`}
-                />
-                <MainStat
-                  label="Student Loan"
-                  value={life.studentLoanStatus.replace("_", " ")}
-                />
-                <MainStat
-                  label="Loan Used"
-                  value={`${formatMoney(life.studentLoanUsed)}/${formatMoney(
-                    life.studentLoanLimit
-                  )}`}
-                />
-                <MainStat label="Job" value={life.job} />
-                <MainStat
-                  label="Career Path"
-                  value={currentJob?.careerPath || "None"}
-                />
-                <MainStat
-                  label="Job Experience"
-                  value={
-                    life.jobId === "unemployed"
-                      ? "None"
-                      : `${getCurrentJobExperience(life)}`
-                  }
-                />
-                <MainStat
-                  label="Next Promotion"
-                  value={
-                    currentJob?.nextJobId
-                      ? getJobName(currentJob.nextJobId)
-                      : life.jobId === "unemployed"
-                        ? "Get a job first"
-                        : "Top role"
-                  }
-                />
-                <MainStat label="Salary" value={formatMoney(life.salary)} />
-                <MainStat
-                  label="Work Pay"
-                  value={`${formatMoney(getWorkPayPerClick(life))}/click`}
-                />
-              </div>
-
-              <h3 className="mb-3 mt-6 text-lg font-black">Business</h3>
-              <div className="grid grid-cols-2 gap-3">
-                <MainStat label="Business" value={life.business} />
-                <MainStat
-                  label="Value"
-                  value={formatMoney(life.businessValue)}
-                />
-                <MainStat label="Stage" value={`${life.businessStage}`} />
-                <MainStat label="Employees" value={`${life.businessEmployees}`} />
-                <MainStat
-                  label="Revenue"
-                  value={formatMoney(life.businessRevenue)}
-                />
-                <MainStat label="Risk" value={`${life.businessRisk}/100`} />
-              </div>
-            </TabCard>
-          )}
-
-          {activeTab === "economy" && economy && (
-            <EconomyPage life={life} economy={economy} />
-          )}
-
-          {activeTab === "actions" && (
-            <TabCard title="Actions">
-              <ActionsRouter
-                life={life}
-                actionPage={actionPage}
-                setActionPage={setActionPage}
-                selectedJobCategory={selectedJobCategory}
-                setSelectedJobCategory={setSelectedJobCategory}
-                selectedSchoolCategory={selectedSchoolCategory}
-                setSelectedSchoolCategory={setSelectedSchoolCategory}
-                updateLife={updateLife}
-              />
-            </TabCard>
-          )}
-
-          {activeTab === "timeline" && (
-            <TabCard title="Timeline">
-              <div className="space-y-3">
-                {life.lifetimeMilestones.length > 0 && (
-                  <div className="rounded-2xl border border-orange-500/30 bg-orange-500/10 p-4">
-                    <h3 className="mb-2 text-sm font-black text-orange-300">
-                      Legacy Milestones
-                    </h3>
-
-                    <div className="space-y-1">
-                      {life.lifetimeMilestones.map((milestone) => (
-                        <p key={milestone} className="text-sm text-zinc-300">
-                          • {milestone}
-                        </p>
-                      ))}
-                    </div>
-                  </div>
-                )}
-
-                {life.eventLog.map((event, index) => (
-                  <p
-                    key={`${event}-${index}`}
-                    className="rounded-2xl bg-zinc-900 p-3 text-sm leading-6 text-zinc-300"
-                  >
-                    {event}
-                  </p>
-                ))}
-              </div>
-            </TabCard>
-          )}
-        </div>
-      </section>
+        <DesktopRightRail life={life} legacyScore={legacyScore} />
+      </div>
 
       <BottomNavigation activeTab={activeTab} onChange={setActiveTab} />
     </main>
   );
 }
+
+function DesktopSidebar({
+  life,
+  activeTab,
+  onChange,
+}: {
+  life: LifeStats;
+  activeTab: ActiveTab;
+  onChange: (tab: ActiveTab) => void;
+}) {
+  const tabs: { id: ActiveTab; label: string; icon: string }[] = [
+    { id: "life", label: "Life", icon: "🏠" },
+    { id: "stats", label: "Stats", icon: "📊" },
+    { id: "career", label: "Career", icon: "💼" },
+    { id: "economy", label: "Money", icon: "💰" },
+    { id: "actions", label: "Actions", icon: "⚡" },
+    { id: "timeline", label: "Story", icon: "📜" },
+  ];
+
+  return (
+    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-64 shrink-0 flex-col rounded-[1.75rem] border border-zinc-800/80 bg-zinc-950/80 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl lg:flex">
+      <div className="px-2 py-3">
+        <p className="text-xl font-black uppercase tracking-[0.22em] text-orange-400">
+          ChargedLife
+        </p>
+      </div>
+
+      <nav className="mt-4 space-y-2">
+        {tabs.map((tab) => {
+          const isActive = activeTab === tab.id;
+
+          return (
+            <button
+              key={tab.id}
+              onClick={() => onChange(tab.id)}
+              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-black transition ${
+                isActive
+                  ? "border border-orange-500/40 bg-orange-500/15 text-orange-300 shadow-lg shadow-orange-950/20"
+                  : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
+              }`}
+            >
+              <span className="text-lg">{tab.icon}</span>
+              <span>{tab.label}</span>
+            </button>
+          );
+        })}
+      </nav>
+
+      <div className="mt-6 border-t border-zinc-800 pt-4">
+        {[
+          ["🎯", "Goals"],
+          ["📅", "Calendar"],
+          ["🏆", "Achievements"],
+          ["⚙️", "Settings"],
+        ].map(([icon, label]) => (
+          <div
+            key={label}
+            className="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-bold text-zinc-500"
+          >
+            <span>{icon}</span>
+            <span>{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-auto rounded-3xl border border-zinc-800 bg-black/40 p-4">
+        <div className="flex items-center gap-3">
+          <div className="grid h-11 w-11 place-items-center rounded-full border border-orange-500/40 bg-orange-500/10 text-sm font-black text-orange-400">
+            CR
+          </div>
+          <div>
+            <p className="text-sm font-black text-white">{life.name}</p>
+            <p className="text-xs text-zinc-500">Age {life.age} • {life.job}</p>
+          </div>
+        </div>
+        <div className="mt-4 flex items-center justify-between text-xs font-bold text-zinc-500">
+          <span>Level 1</span>
+          <span>0 / 100 XP</span>
+        </div>
+        <div className="mt-2 h-2 overflow-hidden rounded-full bg-zinc-900">
+          <div className="h-full w-[8%] rounded-full bg-orange-500" />
+        </div>
+        <p className="mt-3 text-xs text-zinc-500">Early Life</p>
+      </div>
+    </aside>
+  );
+}
+
+function DesktopRightRail({
+  life,
+  legacyScore,
+}: {
+  life: LifeStats;
+  legacyScore: number;
+}) {
+  return (
+    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-[360px] shrink-0 space-y-4 overflow-y-auto pr-1 xl:block">
+      <SidePanel title="Life at a Glance" action="View all stats">
+        <div className="space-y-4">
+          <RailStat icon="💚" label="Health" value={life.health} />
+          <RailStat icon="🙂" label="Happiness" value={life.happiness} />
+          <RailStat icon="⚡" label="Energy" value={Math.max(0, Math.min(100, life.discipline))} />
+          <RailStat icon="👥" label="Social" value={life.friendships} />
+        </div>
+      </SidePanel>
+
+      <SidePanel title="Recent Events" action="View all">
+        <div className="space-y-3">
+          {(life.yearNotes.length > 0
+            ? life.yearNotes.slice(-3).reverse()
+            : [
+                "Started a new chapter in your life.",
+                "New opportunities are available.",
+                "You received your starting funds.",
+              ]
+          ).map((event, index) => (
+            <div key={`${event}-${index}`} className="flex gap-3">
+              <div className="mt-1 grid h-8 w-8 shrink-0 place-items-center rounded-full bg-orange-500/15 text-sm">
+                {index === 0 ? "🌱" : index === 1 ? "⚡" : "💼"}
+              </div>
+              <div>
+                <p className="text-sm font-bold leading-5 text-zinc-200">{event}</p>
+                <p className="text-xs text-zinc-500">Age {life.age}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </SidePanel>
+
+      <SidePanel title="Goals" action="View all">
+        <div className="space-y-3">
+          <GoalRow icon="🎓" label="Complete High School" />
+          <GoalRow icon="💼" label="Get a Full-Time Job" />
+          <GoalRow icon="💵" label="Reach $10,000 Net Worth" />
+        </div>
+      </SidePanel>
+
+      <div className="rounded-3xl border border-orange-500/20 bg-gradient-to-br from-orange-500/15 via-zinc-950 to-black p-5 shadow-xl shadow-orange-950/20">
+        <p className="text-3xl text-orange-400">“</p>
+        <p className="mt-1 text-sm leading-6 text-zinc-300">
+          The best time to plant a tree was 20 years ago. The second best time is now.
+        </p>
+        <p className="mt-3 text-xs text-zinc-500">Legacy score: {legacyScore.toLocaleString()}</p>
+      </div>
+    </aside>
+  );
+}
+
+function SidePanel({
+  title,
+  action,
+  children,
+}: {
+  title: string;
+  action?: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-3xl border border-zinc-800/80 bg-zinc-950/80 p-5 shadow-xl shadow-black/30 backdrop-blur-xl">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <h3 className="text-base font-black text-white">{title}</h3>
+        {action && <p className="text-xs font-black text-orange-400">{action}</p>}
+      </div>
+      {children}
+    </div>
+  );
+}
+
+function RailStat({
+  icon,
+  label,
+  value,
+}: {
+  icon: string;
+  label: string;
+  value: number;
+}) {
+  const safeValue = Math.max(0, Math.min(100, value));
+
+  return (
+    <div>
+      <div className="mb-2 flex items-center justify-between gap-3 text-sm">
+        <div className="flex items-center gap-2 font-bold text-zinc-300">
+          <span>{icon}</span>
+          <span>{label}</span>
+        </div>
+        <span className="font-black text-zinc-200">{safeValue} / 100</span>
+      </div>
+      <div className="h-2 overflow-hidden rounded-full bg-zinc-900">
+        <div
+          className="h-full rounded-full bg-orange-500"
+          style={{ width: `${safeValue}%` }}
+        />
+      </div>
+    </div>
+  );
+}
+
+function GoalRow({ icon, label }: { icon: string; label: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3 rounded-2xl bg-black/30 p-3">
+      <div className="flex items-center gap-3 text-sm font-bold text-zinc-300">
+        <span>{icon}</span>
+        <span>{label}</span>
+      </div>
+      <div className="h-5 w-5 rounded-md border border-zinc-700" />
+    </div>
+  );
+}
+
+function StoryTimelinePanel({ life }: { life: LifeStats }) {
+  return (
+    <div className="space-y-5">
+      {life.lifetimeMilestones.length > 0 && (
+        <div className="rounded-2xl border border-orange-500/30 bg-orange-500/10 p-4">
+          <h3 className="mb-2 text-sm font-black text-orange-300">
+            Legacy Milestones
+          </h3>
+          <div className="space-y-1">
+            {life.lifetimeMilestones.map((milestone) => (
+              <p key={milestone} className="text-sm text-zinc-300">
+                • {milestone}
+              </p>
+            ))}
+          </div>
+        </div>
+      )}
+
+      <div className="grid gap-3 lg:grid-cols-4">
+        {[
+          ["Year 1", "The Beginning", "Your journey starts here."],
+          ["Year 5", "Looking Ahead", "Many paths unfold."],
+          ["Year 10", "Life in Motion", "Big decisions shape your future."],
+          ["Year 20", "Legacy", "The choices you made become your story."],
+        ].map(([year, title, description], index) => (
+          <div
+            key={year}
+            className={`rounded-2xl border p-4 ${
+              index === 0
+                ? "border-orange-500/40 bg-orange-500/10"
+                : "border-zinc-800 bg-zinc-950"
+            }`}
+          >
+            <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-400">
+              {year}
+            </p>
+            <p className="mt-2 font-black text-white">{title}</p>
+            <p className="mt-1 text-sm leading-5 text-zinc-400">{description}</p>
+          </div>
+        ))}
+      </div>
+
+      <div className="space-y-3">
+        {life.eventLog.map((event, index) => (
+          <p
+            key={`${event}-${index}`}
+            className="rounded-2xl bg-zinc-900 p-3 text-sm leading-6 text-zinc-300"
+          >
+            {event}
+          </p>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 
 function EconomyPage({
   life,
@@ -1266,7 +1477,7 @@ function ActionsRouter({
         </div>
       )}
 
-      <div className="grid grid-cols-1 gap-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-3">
         <ActionCategory
           title="Life & Growth"
           description="Health, happiness, social life, and personal growth."
@@ -2087,31 +2298,40 @@ function TopSummary({
   const actionsFull = actionsUsed >= ACTIONS_PER_YEAR;
 
   return (
-    <div className="sticky top-0 z-20 -mx-4 border-b border-zinc-900 bg-[#090909]/95 px-4 pb-4 pt-2 backdrop-blur">
-      <div className="rounded-3xl border border-orange-500/30 bg-zinc-950 p-4 shadow-xl shadow-orange-950/20">
+    <div className="sticky top-0 z-20 -mx-4 border-b border-zinc-900/80 bg-[#050505]/90 px-4 pb-4 pt-2 backdrop-blur-xl lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0">
+      <div className="overflow-hidden rounded-[2rem] border border-orange-500/25 bg-gradient-to-br from-zinc-950 via-[#0d0d10] to-black p-5 shadow-2xl shadow-orange-950/25 lg:p-6">
         <div className="flex items-start justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.25em] text-orange-400">
-              ChargedLife
-            </p>
-            <h1 className="mt-1 text-2xl font-black">{life.name}</h1>
-            <p className="mt-1 text-sm text-zinc-400">
-              Age {life.age} • {life.job}
-            </p>
+          <div className="flex items-start gap-4">
+            <div className="hidden h-16 w-16 shrink-0 place-items-center rounded-full border border-orange-400/40 bg-orange-500/10 shadow-lg shadow-orange-500/20 lg:grid">
+              <span className="text-3xl">⚡</span>
+            </div>
+
+            <div>
+              <p className="text-xs font-black uppercase tracking-[0.35em] text-orange-400">
+                ChargedLife
+              </p>
+              <h1 className="mt-2 text-3xl font-black tracking-tight lg:text-4xl">
+                {life.name}
+              </h1>
+              <p className="mt-1 text-base font-medium text-zinc-400">
+                Age {life.age} • {life.job}
+              </p>
+            </div>
           </div>
 
           <button
             onClick={onRestart}
-            className="rounded-xl border border-zinc-800 px-3 py-2 text-xs font-bold text-zinc-400 transition hover:border-red-400 hover:text-red-400"
+            className="rounded-2xl border border-zinc-800 bg-zinc-950/70 px-4 py-3 text-xs font-black text-zinc-400 transition hover:border-red-400 hover:text-red-300"
           >
             Reset
           </button>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
-          <MiniStat label="Cash" value={formatMoney(life.cash)} />
-          <MiniStat label="Net Worth" value={formatMoney(life.netWorth)} />
+        <div className="mt-5 grid grid-cols-3 gap-3 lg:max-w-3xl">
+          <MiniStat icon="💵" label="Cash" value={formatMoney(life.cash)} />
+          <MiniStat icon="📈" label="Net Worth" value={formatMoney(life.netWorth)} />
           <MiniStat
+            icon="🎯"
             label="Actions"
             value={`${actionsUsed}/${ACTIONS_PER_YEAR}`}
           />
@@ -2119,9 +2339,9 @@ function TopSummary({
 
         <button
           onClick={onEndYear}
-          className={`mt-4 w-full rounded-2xl px-5 py-4 text-base font-black text-black transition active:scale-[0.98] ${
+          className={`mt-5 w-full rounded-2xl px-5 py-5 text-lg font-black text-black shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] lg:max-w-3xl ${
             actionsFull
-              ? "bg-orange-400 shadow-lg shadow-orange-500/30 hover:bg-orange-300"
+              ? "bg-orange-400 hover:bg-orange-300"
               : "bg-orange-500 hover:bg-orange-400"
           }`}
         >
@@ -2419,11 +2639,11 @@ function BottomNavigation({
     { id: "career", label: "Career", icon: "💼" },
     { id: "economy", label: "Money", icon: "💰" },
     { id: "actions", label: "Actions", icon: "⚡" },
-    { id: "timeline", label: "Story", icon: "📜" },
+    { id: "timeline", label: "Story", icon: "📖" },
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-800 bg-zinc-950/95 px-2 pb-4 pt-3 backdrop-blur">
+    <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-800/80 bg-zinc-950/95 px-2 pb-4 pt-3 backdrop-blur-xl lg:hidden">
       <div className="mx-auto grid max-w-md grid-cols-6 gap-1">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
@@ -2434,7 +2654,7 @@ function BottomNavigation({
               onClick={() => onChange(tab.id)}
               className={`rounded-2xl px-1 py-3 text-center text-[10px] font-black transition active:scale-[0.96] ${
                 isActive
-                  ? "bg-orange-500 text-black"
+                  ? "bg-orange-500 text-black shadow-lg shadow-orange-500/25"
                   : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"
               }`}
             >
@@ -2482,14 +2702,34 @@ function ActionCategory({
   description: string;
   onClick: () => void;
 }) {
+  const iconMap: Record<string, string> = {
+    "Life & Growth": "🌱",
+    Relationships: "💗",
+    "Assets & Housing": "🏠",
+    School: "🎓",
+    Career: "💼",
+    "Business & Investing": "💰",
+  };
+
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-left transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.99]"
+      className="group flex w-full items-center gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 text-left transition hover:-translate-y-0.5 hover:border-orange-400/70 hover:bg-zinc-900 hover:shadow-lg hover:shadow-orange-950/20 active:scale-[0.99] lg:min-h-[140px] lg:flex-col lg:items-start"
     >
-      <span className="block text-base font-black text-white">{title}</span>
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
-        {description}
+      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-orange-500/25 bg-orange-500/10 text-2xl shadow-lg shadow-black/20">
+        {iconMap[title] || "⚡"}
+      </span>
+      <span className="min-w-0 flex-1">
+        <span className="flex items-center justify-between gap-3">
+          <span className="block text-base font-black text-white lg:text-lg">{title}</span>
+          <span className="text-zinc-500 transition group-hover:translate-x-1 group-hover:text-orange-400">›</span>
+        </span>
+        <span className="mt-1 block text-sm leading-5 text-zinc-400">
+          {description}
+        </span>
+        <span className="mt-4 hidden rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-2 text-center text-xs font-black text-orange-400 lg:block">
+          Explore →
+        </span>
       </span>
     </button>
   );
@@ -2519,27 +2759,38 @@ function ActionButton({
 
 function TabCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-3xl bg-zinc-950 p-5">
-      <h2 className="mb-4 text-xl font-black">{title}</h2>
+    <div className="rounded-[1.75rem] border border-zinc-800/80 bg-zinc-950/80 p-5 shadow-2xl shadow-black/30 backdrop-blur-xl lg:p-6">
+      <h2 className="mb-5 text-2xl font-black tracking-tight">{title}</h2>
       {children}
     </div>
   );
 }
 
-function MiniStat({ label, value }: { label: string; value: string }) {
+function MiniStat({
+  label,
+  value,
+  icon,
+}: {
+  label: string;
+  value: string;
+  icon?: string;
+}) {
   return (
-    <div className="rounded-2xl bg-zinc-900 p-3">
-      <p className="text-[10px] font-bold uppercase tracking-[0.16em] text-zinc-500">
-        {label}
-      </p>
-      <p className="mt-1 truncate text-sm font-black text-white">{value}</p>
+    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/80 p-3 shadow-lg shadow-black/10 lg:p-4">
+      <div className="flex items-center gap-2">
+        {icon && <span className="text-base">{icon}</span>}
+        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">
+          {label}
+        </p>
+      </div>
+      <p className="mt-2 truncate text-base font-black text-white lg:text-xl">{value}</p>
     </div>
   );
 }
 
 function MainStat({ label, value }: { label: string; value: string }) {
   return (
-    <div className="rounded-2xl bg-zinc-900 p-4">
+    <div className="rounded-2xl border border-zinc-800/70 bg-zinc-900/80 p-4">
       <p className="text-xs font-bold uppercase tracking-[0.18em] text-zinc-500">
         {label}
       </p>
