@@ -589,14 +589,14 @@ export default function Home() {
   return (
     <main className="min-h-screen overflow-x-hidden bg-[#050505] text-white selection:bg-orange-500 selection:text-black">
       <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_right,rgba(255,106,0,0.18),transparent_32%),radial-gradient(circle_at_bottom_left,rgba(255,106,0,0.10),transparent_30%)]" />
-      <div className="relative mx-auto flex min-h-screen w-full max-w-[1800px] gap-5 px-4 pb-28 pt-4 lg:px-6 lg:pb-8">
+      <div className="relative mx-auto flex min-h-screen w-full max-w-[1500px] gap-4 px-3 pb-24 pt-3 sm:px-4 lg:px-4 lg:pb-6">
         <DesktopSidebar
           life={life}
           activeTab={activeTab}
           onChange={setActiveTab}
         />
 
-        <section className="mx-auto w-full max-w-md lg:max-w-none lg:flex-1">
+        <section className="mx-auto w-full max-w-[390px] lg:max-w-none lg:flex-1">
           {content}
         </section>
 
@@ -627,14 +627,14 @@ function DesktopSidebar({
   ];
 
   return (
-    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-64 shrink-0 flex-col rounded-[1.75rem] border border-zinc-800/80 bg-zinc-950/80 p-4 shadow-2xl shadow-black/40 backdrop-blur-xl lg:flex">
+    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-56 shrink-0 flex-col rounded-[1.5rem] border border-zinc-800/80 bg-zinc-950/80 p-3 shadow-2xl shadow-black/40 backdrop-blur-xl lg:flex">
       <div className="px-2 py-3">
-        <p className="text-xl font-black uppercase tracking-[0.22em] text-orange-400">
+        <p className="text-base font-black uppercase tracking-[0.22em] text-orange-400">
           ChargedLife
         </p>
       </div>
 
-      <nav className="mt-4 space-y-2">
+      <nav className="mt-3 space-y-1.5">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
 
@@ -642,7 +642,7 @@ function DesktopSidebar({
             <button
               key={tab.id}
               onClick={() => onChange(tab.id)}
-              className={`flex w-full items-center gap-3 rounded-2xl px-4 py-3 text-left text-sm font-black transition ${
+              className={`flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-left text-sm font-black transition ${
                 isActive
                   ? "border border-orange-500/40 bg-orange-500/15 text-orange-300 shadow-lg shadow-orange-950/20"
                   : "text-zinc-400 hover:bg-zinc-900 hover:text-white"
@@ -655,7 +655,7 @@ function DesktopSidebar({
         })}
       </nav>
 
-      <div className="mt-6 border-t border-zinc-800 pt-4">
+      <div className="mt-4 border-t border-zinc-800 pt-3">
         {[
           ["🎯", "Goals"],
           ["📅", "Calendar"],
@@ -664,7 +664,7 @@ function DesktopSidebar({
         ].map(([icon, label]) => (
           <div
             key={label}
-            className="flex items-center gap-3 rounded-2xl px-4 py-3 text-sm font-bold text-zinc-500"
+            className="flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-bold text-zinc-500"
           >
             <span>{icon}</span>
             <span>{label}</span>
@@ -672,9 +672,9 @@ function DesktopSidebar({
         ))}
       </div>
 
-      <div className="mt-auto rounded-3xl border border-zinc-800 bg-black/40 p-4">
+      <div className="mt-auto rounded-2xl border border-zinc-800 bg-black/40 p-3">
         <div className="flex items-center gap-3">
-          <div className="grid h-11 w-11 place-items-center rounded-full border border-orange-500/40 bg-orange-500/10 text-sm font-black text-orange-400">
+          <div className="grid h-9 w-9 place-items-center rounded-full border border-orange-500/40 bg-orange-500/10 text-sm font-black text-orange-400">
             CR
           </div>
           <div>
@@ -703,7 +703,7 @@ function DesktopRightRail({
   legacyScore: number;
 }) {
   return (
-    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-[360px] shrink-0 space-y-4 overflow-y-auto pr-1 xl:block">
+    <aside className="sticky top-4 hidden h-[calc(100vh-2rem)] w-[310px] shrink-0 space-y-3 overflow-y-auto pr-1 xl:block">
       <SidePanel title="Life at a Glance" action="View all stats">
         <div className="space-y-4">
           <RailStat icon="💚" label="Health" value={life.health} />
@@ -744,7 +744,7 @@ function DesktopRightRail({
         </div>
       </SidePanel>
 
-      <div className="rounded-3xl border border-orange-500/20 bg-gradient-to-br from-orange-500/15 via-zinc-950 to-black p-5 shadow-xl shadow-orange-950/20">
+      <div className="rounded-2xl border border-orange-500/20 bg-gradient-to-br from-orange-500/15 via-zinc-950 to-black p-4 shadow-xl shadow-orange-950/20">
         <p className="text-3xl text-orange-400">“</p>
         <p className="mt-1 text-sm leading-6 text-zinc-300">
           The best time to plant a tree was 20 years ago. The second best time is now.
@@ -765,7 +765,7 @@ function SidePanel({
   children: ReactNode;
 }) {
   return (
-    <div className="rounded-3xl border border-zinc-800/80 bg-zinc-950/80 p-5 shadow-xl shadow-black/30 backdrop-blur-xl">
+    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-950/80 p-4 shadow-xl shadow-black/30 backdrop-blur-xl">
       <div className="mb-4 flex items-center justify-between gap-3">
         <h3 className="text-base font-black text-white">{title}</h3>
         {action && <p className="text-xs font-black text-orange-400">{action}</p>}
@@ -2028,7 +2028,7 @@ function LifeGrowthButton({
       <span className="block text-base font-black text-white">
         {action.name}
       </span>
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block text-[13px] leading-5 text-zinc-400">
         {action.description}
       </span>
 
@@ -2122,7 +2122,7 @@ function DegreeButton({
         {degree.name}
       </span>
 
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block text-[13px] leading-5 text-zinc-400">
         {degree.description}
       </span>
 
@@ -2213,7 +2213,7 @@ function JobApplyButton({
     >
       <span className="block text-base font-black text-white">{job.title}</span>
 
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block text-[13px] leading-5 text-zinc-400">
         {formatMoney(job.salary)}/year • Work pays{" "}
         {formatMoney(Math.floor(job.salary / ACTIONS_PER_YEAR))}/click
       </span>
@@ -2298,11 +2298,11 @@ function TopSummary({
   const actionsFull = actionsUsed >= ACTIONS_PER_YEAR;
 
   return (
-    <div className="sticky top-0 z-20 -mx-4 border-b border-zinc-900/80 bg-[#050505]/90 px-4 pb-4 pt-2 backdrop-blur-xl lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0">
-      <div className="overflow-hidden rounded-[2rem] border border-orange-500/25 bg-gradient-to-br from-zinc-950 via-[#0d0d10] to-black p-5 shadow-2xl shadow-orange-950/25 lg:p-6">
+    <div className="sticky top-0 z-20 -mx-3 border-b border-zinc-900/80 bg-[#050505]/90 px-3 pb-3 pt-2 backdrop-blur-xl lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0">
+      <div className="overflow-hidden rounded-[1.5rem] border border-orange-500/25 bg-gradient-to-br from-zinc-950 via-[#0d0d10] to-black p-4 shadow-xl shadow-orange-950/20 sm:p-5 lg:p-5">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-start gap-4">
-            <div className="hidden h-16 w-16 shrink-0 place-items-center rounded-full border border-orange-400/40 bg-orange-500/10 shadow-lg shadow-orange-500/20 lg:grid">
+            <div className="hidden h-10 w-10 shrink-0 place-items-center rounded-full border border-orange-400/40 bg-orange-500/10 shadow-lg shadow-orange-500/20 lg:grid">
               <span className="text-3xl">⚡</span>
             </div>
 
@@ -2310,7 +2310,7 @@ function TopSummary({
               <p className="text-xs font-black uppercase tracking-[0.35em] text-orange-400">
                 ChargedLife
               </p>
-              <h1 className="mt-2 text-3xl font-black tracking-tight lg:text-4xl">
+              <h1 className="mt-1 text-2xl font-black tracking-tight sm:text-3xl lg:text-3xl">
                 {life.name}
               </h1>
               <p className="mt-1 text-base font-medium text-zinc-400">
@@ -2327,7 +2327,7 @@ function TopSummary({
           </button>
         </div>
 
-        <div className="mt-5 grid grid-cols-3 gap-3 lg:max-w-3xl">
+        <div className="mt-4 grid grid-cols-3 gap-2 lg:max-w-2xl">
           <MiniStat icon="💵" label="Cash" value={formatMoney(life.cash)} />
           <MiniStat icon="📈" label="Net Worth" value={formatMoney(life.netWorth)} />
           <MiniStat
@@ -2339,7 +2339,7 @@ function TopSummary({
 
         <button
           onClick={onEndYear}
-          className={`mt-5 w-full rounded-2xl px-5 py-5 text-lg font-black text-black shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] lg:max-w-3xl ${
+          className={`mt-4 w-full rounded-2xl px-5 py-3.5 text-base font-black sm:py-4 text-black shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] lg:max-w-3xl ${
             actionsFull
               ? "bg-orange-400 hover:bg-orange-300"
               : "bg-orange-500 hover:bg-orange-400"
@@ -2385,7 +2385,7 @@ function NewLifeWizard({
 
   return (
     <main className="min-h-screen bg-[#090909] px-5 py-8 text-white">
-      <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md flex-col justify-center">
+      <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-[390px] flex-col justify-center">
         <div className="rounded-3xl border border-orange-500/30 bg-zinc-950 p-6 shadow-2xl shadow-orange-950/40">
           <div className="mb-8 text-center">
             <p className="mb-2 text-sm font-semibold uppercase tracking-[0.35em] text-orange-400">
@@ -2585,7 +2585,7 @@ function LifeCompleteScreen({
 }) {
   return (
     <main className="min-h-screen bg-[#090909] px-5 py-8 text-white">
-      <section className="mx-auto w-full max-w-md">
+      <section className="mx-auto w-full max-w-[390px]">
         <div className="rounded-3xl border border-orange-500/30 bg-zinc-950 p-6 shadow-2xl shadow-orange-950/40">
           <p className="mb-2 text-sm font-semibold uppercase tracking-[0.35em] text-orange-400">
             Life Complete
@@ -2643,8 +2643,8 @@ function BottomNavigation({
   ];
 
   return (
-    <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-800/80 bg-zinc-950/95 px-2 pb-4 pt-3 backdrop-blur-xl lg:hidden">
-      <div className="mx-auto grid max-w-md grid-cols-6 gap-1">
+    <nav className="fixed bottom-0 left-0 right-0 z-30 border-t border-zinc-800/80 bg-zinc-950/95 px-2 pb-3 pt-2 backdrop-blur-xl lg:hidden">
+      <div className="mx-auto grid max-w-[390px] grid-cols-6 gap-1">
         {tabs.map((tab) => {
           const isActive = activeTab === tab.id;
 
@@ -2652,7 +2652,7 @@ function BottomNavigation({
             <button
               key={tab.id}
               onClick={() => onChange(tab.id)}
-              className={`rounded-2xl px-1 py-3 text-center text-[10px] font-black transition active:scale-[0.96] ${
+              className={`rounded-2xl px-1 py-2.5 text-center text-[10px] font-black transition active:scale-[0.96] ${
                 isActive
                   ? "bg-orange-500 text-black shadow-lg shadow-orange-500/25"
                   : "bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-white"
@@ -2714,20 +2714,20 @@ function ActionCategory({
   return (
     <button
       onClick={onClick}
-      className="group flex w-full items-center gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 text-left transition hover:-translate-y-0.5 hover:border-orange-400/70 hover:bg-zinc-900 hover:shadow-lg hover:shadow-orange-950/20 active:scale-[0.99] lg:min-h-[140px] lg:flex-col lg:items-start"
+      className="group flex w-full items-center gap-3 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-3.5 text-left transition hover:-translate-y-0.5 hover:border-orange-400/70 hover:bg-zinc-900 hover:shadow-lg hover:shadow-orange-950/20 active:scale-[0.99] lg:min-h-[118px] lg:flex-col lg:items-start"
     >
-      <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-orange-500/25 bg-orange-500/10 text-2xl shadow-lg shadow-black/20">
+      <span className="grid h-10 w-10 shrink-0 place-items-center rounded-2xl border border-orange-500/25 bg-orange-500/10 text-xl shadow-lg shadow-black/20">
         {iconMap[title] || "⚡"}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-3">
-          <span className="block text-base font-black text-white lg:text-lg">{title}</span>
+          <span className="block text-[15px] font-black text-white lg:text-base">{title}</span>
           <span className="text-zinc-500 transition group-hover:translate-x-1 group-hover:text-orange-400">›</span>
         </span>
-        <span className="mt-1 block text-sm leading-5 text-zinc-400">
+        <span className="mt-1 block text-[13px] leading-5 text-zinc-400">
           {description}
         </span>
-        <span className="mt-4 hidden rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-2 text-center text-xs font-black text-orange-400 lg:block">
+        <span className="mt-3 hidden rounded-xl border border-orange-500/20 bg-orange-500/10 px-4 py-2 text-center text-xs font-black text-orange-400 lg:block">
           Explore →
         </span>
       </span>
@@ -2750,7 +2750,7 @@ function ActionButton({
       className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-left transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.99]"
     >
       <span className="block text-base font-black text-white">{title}</span>
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block text-[13px] leading-5 text-zinc-400">
         {description}
       </span>
     </button>
@@ -2759,8 +2759,8 @@ function ActionButton({
 
 function TabCard({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div className="rounded-[1.75rem] border border-zinc-800/80 bg-zinc-950/80 p-5 shadow-2xl shadow-black/30 backdrop-blur-xl lg:p-6">
-      <h2 className="mb-5 text-2xl font-black tracking-tight">{title}</h2>
+    <div className="rounded-[1.5rem] border border-zinc-800/80 bg-zinc-950/80 p-4 shadow-2xl shadow-black/30 backdrop-blur-xl lg:p-5">
+      <h2 className="mb-4 text-xl font-black tracking-tight lg:text-2xl">{title}</h2>
       {children}
     </div>
   );
@@ -2776,14 +2776,14 @@ function MiniStat({
   icon?: string;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/80 p-3 shadow-lg shadow-black/10 lg:p-4">
+    <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/80 p-2.5 shadow-lg shadow-black/10 lg:p-3">
       <div className="flex items-center gap-2">
         {icon && <span className="text-base">{icon}</span>}
-        <p className="text-[10px] font-bold uppercase tracking-[0.18em] text-zinc-500">
+        <p className="text-[9px] font-bold uppercase tracking-[0.16em] text-zinc-500">
           {label}
         </p>
       </div>
-      <p className="mt-2 truncate text-base font-black text-white lg:text-xl">{value}</p>
+      <p className="mt-1 truncate text-sm font-black text-white sm:text-base lg:text-lg">{value}</p>
     </div>
   );
 }
