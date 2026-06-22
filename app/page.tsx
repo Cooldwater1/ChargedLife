@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import {
   ACTIONS_PER_YEAR,
+  MAX_ENERGY,
   childhoodTraits,
   countries,
   defaultOrigin,
@@ -29,6 +30,8 @@ import {
   seekInvestor,
   selectBusiness,
   launchProduct,
+  getBusinessMilestoneProgress,
+  getBusinessMilestones,
   getBusinessRiskLabel,
   getBusinessStageName,
   getBusinessTypeById,
@@ -41,7 +44,15 @@ import {
   dateLife,
   declineLifeEvent,
   disablePropertyManager,
+  doBusinessSpecificAction,
+  getBusinessSpecificActions,
+  getBusinessSpecialStats,
   dismissPopup,
+  doProductLifecycleAction,
+  getProductLifecycleActions,
+  getProductProject,
+  getProductProjectPhaseName,
+  isProductBusinessType,
   doLifeGrowth,
   enablePropertyManager,
   endYear,
@@ -55,6 +66,7 @@ import {
   getCurrentJobExperience,
   getDebtInterest,
   getEconomyBreakdown,
+  getEnergyStatus,
   getHousingCost,
   getItemValue,
   getLoanLimit,
@@ -71,7 +83,6 @@ import {
   getLegacyRank,
   getLegacyScore,
   getRentalIncomeEstimate,
-  getWorkPayPerClick,
   haveChild,
   hireEmployee,
   homeShop,
@@ -89,6 +100,13 @@ import {
   proposeMarriage,
   renovateHome,
   rentHousing,
+  realEstateAddFunds,
+  realEstateFindDeal,
+  realEstateBuyDeal,
+  realEstateRenovate,
+  realEstateRentProject,
+  realEstateFlipProject,
+  realEstateHireManager,
   rentOutHome,
   sellBusiness,
   sellCar,
@@ -98,7 +116,6 @@ import {
   setHomeRentPriceLevel,
   stopRentingOutHome,
   takeLoan,
-  takeRisk,
   work,
   workOnBusiness,
 } from "@/lib/game/logic";
@@ -134,6 +151,10 @@ import {
   getDegreeProgress,
   getSkillName,
 } from "@/lib/game/utils";
+
+const MAX_SAVED_EVENTS = 40;
+const MAX_SAVED_YEAR_NOTES = 6;
+const MAX_SAVED_MILESTONES = 25;
 
 const jobCategories: { id: JobCategory; label: string; description: string }[] =
   [
@@ -260,6 +281,9 @@ const lifeGrowthCategories: {
 
 type AssetCategory = "overview" | "properties" | "vehicles" | "items";
 
+const GAME_STAGE_LABEL = "Pre-Alpha";
+const GAME_VERSION_LABEL = "v0.3.0";
+
 function normalizeLife(savedLife: LifeStats): LifeStats {
   return {
     ...savedLife,
@@ -272,6 +296,7 @@ function normalizeLife(savedLife: LifeStats): LifeStats {
     careerXp: savedLife.careerXp || 0,
     jobExperience: savedLife.jobExperience || {},
     stress: savedLife.stress ?? 35,
+    energy: savedLife.energy ?? MAX_ENERGY,
     hasAskedPromotionThisYear: savedLife.hasAskedPromotionThisYear || false,
     partTimeJobs: savedLife.partTimeJobs || [],
     partTimeWorkUsedThisYear: savedLife.partTimeWorkUsedThisYear || false,
@@ -383,22 +408,74 @@ function normalizeLife(savedLife: LifeStats): LifeStats {
     activeBusinessId: savedLife.activeBusinessId || "",
     businessesStarted: savedLife.businessesStarted || 0,
 
-    lifetimeMilestones: savedLife.lifetimeMilestones || [],
+    lifetimeMilestones: (savedLife.lifetimeMilestones || []).slice(0, MAX_SAVED_MILESTONES),
 
     actionsLeft:
       savedLife.actionsLeft === undefined
         ? ACTIONS_PER_YEAR
         : savedLife.actionsLeft,
-    yearNotes: savedLife.yearNotes || [],
+    recoveryActionsUsed: savedLife.recoveryActionsUsed || {},
+    yearNotes: (savedLife.yearNotes || []).slice(0, MAX_SAVED_YEAR_NOTES),
     lastYearRecap: savedLife.lastYearRecap || null,
 
     yearsWorked: savedLife.yearsWorked || 0,
     yearsStudied: savedLife.yearsStudied || 0,
     riskTaken: savedLife.riskTaken || 0,
 
-    eventLog: savedLife.eventLog || [],
+    eventLog: (savedLife.eventLog || []).slice(0, MAX_SAVED_EVENTS),
     isDead: savedLife.isDead || false,
     deathReason: savedLife.deathReason || "",
+  };
+}
+
+function buildActionResult(before: LifeStats, after: LifeStats) {
+  const changes: string[] = [];
+
+  const cashChange = after.cash - before.cash;
+  if (cashChange !== 0) changes.push(`Cash ${cashChange > 0 ? "+" : ""}${formatMoney(cashChange)}`);
+
+  const debtChange = after.debt - before.debt;
+  if (debtChange !== 0) changes.push(`Debt ${debtChange > 0 ? "+" : ""}${formatMoney(debtChange)}`);
+
+  const energyChange = (after.energy ?? MAX_ENERGY) - (before.energy ?? MAX_ENERGY);
+  if (energyChange !== 0) changes.push(`Energy ${energyChange > 0 ? "+" : ""}${energyChange}`);
+
+  const stressChange = (after.stress ?? 35) - (before.stress ?? 35);
+  if (stressChange !== 0) changes.push(`Stress ${stressChange > 0 ? "+" : ""}${stressChange}`);
+
+  const happinessChange = after.happiness - before.happiness;
+  if (happinessChange !== 0) changes.push(`Happiness ${happinessChange > 0 ? "+" : ""}${happinessChange}`);
+
+  const reputationChange = after.reputation - before.reputation;
+  if (reputationChange !== 0) changes.push(`Reputation ${reputationChange > 0 ? "+" : ""}${reputationChange}`);
+
+  const careerXpChange = after.careerXp - before.careerXp;
+  if (careerXpChange !== 0) changes.push(`Career XP ${careerXpChange > 0 ? "+" : ""}${careerXpChange}`);
+
+  const businessValueChange = after.businessValue - before.businessValue;
+  if (businessValueChange !== 0) changes.push(`Business value ${businessValueChange > 0 ? "+" : ""}${formatMoney(businessValueChange)}`);
+
+  return changes.slice(0, 5);
+}
+
+function prepareLifeForStorage(life: LifeStats): LifeStats {
+  return {
+    ...life,
+    popupMessage: null,
+    yearNotes: (life.yearNotes || []).slice(0, MAX_SAVED_YEAR_NOTES),
+    eventLog: (life.eventLog || []).slice(0, MAX_SAVED_EVENTS),
+    lifetimeMilestones: (life.lifetimeMilestones || []).slice(0, MAX_SAVED_MILESTONES),
+    lastYearRecap: life.lastYearRecap
+      ? {
+          ...life.lastYearRecap,
+          events: (life.lastYearRecap.events || []).slice(0, 4),
+          goalsCompleted: (life.lastYearRecap.goalsCompleted || []).slice(0, 4),
+        }
+      : null,
+    ownedHomes: (life.ownedHomes || []).slice(0, 30),
+    ownedCars: (life.ownedCars || []).slice(0, 30),
+    ownedItems: (life.ownedItems || []).slice(0, 30),
+    businesses: (life.businesses || []).slice(0, 12),
   };
 }
 
@@ -432,7 +509,14 @@ export default function Home() {
   useEffect(() => {
     if (!life) return;
 
-    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(life));
+    const timeoutId = window.setTimeout(() => {
+      window.localStorage.setItem(
+        STORAGE_KEY,
+        JSON.stringify(prepareLifeForStorage(life))
+      );
+    }, 120);
+
+    return () => window.clearTimeout(timeoutId);
   }, [life]);
 
   const legacyScore = useMemo(() => {
@@ -466,7 +550,20 @@ export default function Home() {
   }
 
   function updateLife(nextLife: LifeStats) {
-    setLife(normalizeLife(nextLife));
+    const normalized = normalizeLife(prepareLifeForStorage(nextLife));
+
+    if (life && normalized.actionsLeft < life.actionsLeft) {
+      const result = buildActionResult(life, normalized);
+      const baseMessage = normalized.popupMessage || "Action complete.";
+
+      setLife({
+        ...normalized,
+        popupMessage: result.length > 0 ? `${baseMessage} Changes: ${result.join(", ")}.` : baseMessage,
+      });
+      return;
+    }
+
+    setLife(normalized);
   }
 
   function startLife() {
@@ -604,34 +701,113 @@ export default function Home() {
         )}
 
         {activeTab === "career" && (
-          <TabCard title="School & Career">
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <MainStat label="Education" value={life.education} />
-              <MainStat label="Active Degree" value={getDegreeName(life.activeDegreeId)} />
-              <MainStat label="Degree Progress" value={`${getDegreeProgress(life, life.activeDegreeId)}/100`} />
-              <MainStat label="Student Loan" value={life.studentLoanStatus.replace("_", " ")} />
-              <MainStat label="Loan Used" value={`${formatMoney(life.studentLoanUsed)}/${formatMoney(life.studentLoanLimit)}`} />
-              <MainStat label="Job" value={life.job} />
-              <MainStat label="Career Path" value={currentJob?.careerPath || "None"} />
-              <MainStat label="Job Experience" value={life.jobId === "unemployed" ? "None" : `${getCurrentJobExperience(life)}`} />
-              <MainStat label="Next Promotion" value={currentJob?.nextJobId ? getJobName(currentJob.nextJobId) : life.jobId === "unemployed" ? "Get a job first" : "Top role"} />
-              <MainStat label="Salary" value={formatMoney(life.salary)} />
-              <MainStat label="Work Pay" value={`${formatMoney(getWorkPayPerClick(life))}/click`} />
+          <TabCard title="Career & Business">
+            <div className="rounded-[2rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_35%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                    Career Path
+                  </p>
+                  <h2 className="mt-2 text-3xl font-black text-white">
+                    {life.jobId === "unemployed" ? "No full-time job yet" : life.job}
+                  </h2>
+                  <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+                    Career gives stable salary. Business gives upside and risk. Use the quick buttons below to jump into the right hub.
+                  </p>
+                </div>
+
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    onClick={() => {
+                      setSelectedJobCategory(null);
+                      setActiveTab("actions");
+                      setActionPage("apply");
+                    }}
+                    className="rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+                  >
+                    Apply for Job →
+                  </button>
+                  <button
+                    onClick={() => {
+                      setActiveTab("actions");
+                      setActionPage("money");
+                    }}
+                    className="rounded-2xl border border-orange-500/35 bg-orange-500/10 px-4 py-3 text-sm font-black text-orange-300 transition hover:border-orange-400"
+                  >
+                    Open Business Hub →
+                  </button>
+                </div>
+              </div>
+
+              <div className="mt-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
+                <MainStat label="Education" value={life.education} />
+                <MainStat label="Job" value={life.job} />
+                <MainStat label="Annual Salary" value={formatMoney(life.salary)} />
+                <MainStat label="Job Experience" value={life.jobId === "unemployed" ? "None" : `${getCurrentJobExperience(life)}`} />
+                <MainStat label="Career Path" value={currentJob?.careerPath || "None"} />
+                <MainStat label="Next Promotion" value={currentJob?.nextJobId ? getJobName(currentJob.nextJobId) : life.jobId === "unemployed" ? "Get a job first" : "Top role"} />
+                <MainStat label="Career XP" value={`${life.careerXp}`} />
+                <MainStat label="Stress" value={`${life.stress}/100`} />
+              </div>
             </div>
 
-            <h3 className="mb-3 mt-6 text-lg font-black">Business</h3>
-            <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
-              <MainStat label="Business" value={life.business} />
-              <MainStat label="Value" value={formatMoney(life.businessValue)} />
-              <MainStat label="Stage" value={`${life.businessStage}`} />
-              <MainStat label="Employees" value={`${life.businessEmployees}`} />
-              <MainStat label="Revenue" value={formatMoney(life.businessRevenue)} />
-              <MainStat label="Risk" value={`${life.businessRisk}/100`} />
+            <div className="mt-5 grid gap-4 xl:grid-cols-2">
+              <div className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-5">
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                  School & Skills
+                </p>
+                <div className="mt-4 grid grid-cols-2 gap-3">
+                  <MainStat label="Active Degree" value={getDegreeName(life.activeDegreeId)} />
+                  <MainStat label="Degree Progress" value={`${getDegreeProgress(life, life.activeDegreeId)}/100`} />
+                  <MainStat label="Student Loan" value={life.studentLoanStatus.replace("_", " ")} />
+                  <MainStat label="Loan Used" value={`${formatMoney(life.studentLoanUsed)}/${formatMoney(life.studentLoanLimit)}`} />
+                </div>
+              </div>
+
+              <div className="rounded-[1.6rem] border border-orange-500/20 bg-orange-500/5 p-5">
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                  Business Shortcut
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-white">
+                  {life.business === "None" ? "No business yet" : life.business}
+                </h3>
+                <p className="mt-2 text-sm leading-6 text-zinc-400">
+                  {life.business === "None"
+                    ? "Open the Business Hub to start a company."
+                    : `Value ${formatMoney(life.businessValue)} • Revenue ${formatMoney(life.businessRevenue)} • Risk ${life.businessRisk}/100`}
+                </p>
+                <button
+                  onClick={() => {
+                    setActiveTab("actions");
+                    setActionPage("money");
+                  }}
+                  className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+                >
+                  Manage Business →
+                </button>
+              </div>
             </div>
           </TabCard>
         )}
 
-        {activeTab === "economy" && economy && <EconomyPage life={life} economy={economy} />}
+        {activeTab === "economy" && economy && <EconomyPage life={life} economy={economy} updateLife={updateLife} />}
+
+        {activeTab === "business" && (
+          <TabCard title="Business Hub">
+            <ActionsRouter
+              life={life}
+              actionPage="money"
+              setActionPage={setActionPage}
+              selectedJobCategory={selectedJobCategory}
+              setSelectedJobCategory={setSelectedJobCategory}
+              selectedSchoolCategory={selectedSchoolCategory}
+              setSelectedSchoolCategory={setSelectedSchoolCategory}
+              selectedAssetCategory={selectedAssetCategory}
+              setSelectedAssetCategory={setSelectedAssetCategory}
+              updateLife={updateLife}
+            />
+          </TabCard>
+        )}
 
         {activeTab === "actions" && (
           <TabCard title="Actions">
@@ -699,8 +875,9 @@ function DesktopSidebar({
   const tabs: { id: ActiveTab; label: string; icon: string }[] = [
     { id: "life", label: "Life", icon: "🏠" },
     { id: "stats", label: "Stats", icon: "📊" },
-    { id: "career", label: "Career", icon: "💼" },
+    { id: "career", label: "Career+", icon: "💼" },
     { id: "economy", label: "Money", icon: "💰" },
+    { id: "business", label: "Business Hub", icon: "🏢" },
     { id: "actions", label: "Actions", icon: "⚡" },
     { id: "timeline", label: "Story", icon: "📖" },
   ];
@@ -715,9 +892,14 @@ function DesktopSidebar({
         <div className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-orange-500/40 bg-orange-500/10 text-lg shadow-lg shadow-orange-500/10">
           ⚡
         </div>
-        <p className="whitespace-nowrap text-base font-black uppercase tracking-[0.10em] text-white">
-          Charged<span className="text-orange-500">Life</span>
-        </p>
+        <div>
+          <p className="whitespace-nowrap text-base font-black uppercase tracking-[0.10em] text-white">
+            Charged<span className="text-orange-500">Life</span>
+          </p>
+          <p className="mt-0.5 text-[10px] font-black uppercase tracking-[0.14em] text-zinc-600">
+            {GAME_STAGE_LABEL} • {GAME_VERSION_LABEL}
+          </p>
+        </div>
       </button>
 
       <nav className="mt-6 space-y-1.5">
@@ -1271,14 +1453,17 @@ function FinancialSnapshotPanel({ life, monthlyIncome }: { life: LifeStats; mont
   const monthlyNet = Math.round(yearlySavings / 12);
   const savingsRate =
     yearlyIncome > 0 ? Math.max(0, Math.min(100, Math.round((yearlySavings / yearlyIncome) * 100))) : 0;
-  const chart = [
-    Math.max(8, Math.min(100, savingsRate)),
-    Math.max(8, Math.min(100, Math.round((life.cash / Math.max(1, life.netWorth || 1)) * 100))),
-    Math.max(8, Math.min(100, 100 - (life.stress || 35))),
-    Math.max(8, Math.min(100, life.reputation)),
-    Math.max(8, Math.min(100, life.happiness)),
-    Math.max(8, Math.min(100, life.health)),
+
+  const cashFlowItems = [
+    { label: "Income", value: yearlyIncome, tone: "green" },
+    { label: "Expenses", value: yearlyExpenses, tone: "red" },
+    { label: "Net", value: yearlySavings, tone: yearlySavings >= 0 ? "green" : "red" },
+    { label: "Debt", value: life.debt, tone: "purple" },
+    { label: "Assets", value: Math.max(0, life.netWorth), tone: "blue" },
+    { label: "Cash", value: life.cash, tone: "green" },
   ];
+
+  const maxValue = Math.max(1, ...cashFlowItems.map((item) => Math.abs(item.value)));
 
   return (
     <DashboardPanel title="Financial Snapshot" icon="3" action="Live data" iconMode="number">
@@ -1290,23 +1475,59 @@ function FinancialSnapshotPanel({ life, monthlyIncome }: { life: LifeStats; mont
           <FinanceMini label="Debt" value={formatMoney(life.debt)} tone="purple" />
         </div>
 
-        <div className="rounded-[1.25rem] border border-zinc-800/70 bg-black/25 p-3.5">
+        <div className="rounded-[1.25rem] bg-black/25 p-3.5">
           <div className="mb-3 flex items-center justify-between gap-3">
             <p className="text-xs font-black uppercase tracking-[0.16em] text-zinc-500">Cash Flow</p>
             <p className={`text-xs font-black ${yearlySavings >= 0 ? "text-green-400" : "text-red-400"}`}>
               {yearlySavings >= 0 ? "Savings" : "Deficit"} {savingsRate}%
             </p>
           </div>
-          <div className="flex h-24 items-end gap-2 border-b border-l border-zinc-800/80 px-2 pb-2">
-            {chart.map((height, index) => (
-              <div key={index} className="flex flex-1 flex-col items-center gap-2">
-                <div className={`w-full rounded-t-lg ${yearlySavings >= 0 ? "bg-green-500/75" : "bg-red-500/75"}`} style={{ height: `${height}%` }} />
-                <span className="text-[10px] text-zinc-600">{["Save", "Cash", "Stress", "Rep", "Happy", "Health"][index]}</span>
-              </div>
-            ))}
+
+          <div className="space-y-2">
+            {cashFlowItems.map((item) => {
+              const width = Math.max(6, Math.round((Math.abs(item.value) / maxValue) * 100));
+
+              return (
+                <div key={item.label} className="grid grid-cols-[72px_minmax(0,1fr)_84px] items-center gap-2">
+                  <span className="text-[10px] font-black uppercase tracking-[0.12em] text-zinc-500">
+                    {item.label}
+                  </span>
+                  <div className="h-2.5 overflow-hidden rounded-full bg-zinc-900">
+                    <div
+                      className={`h-full rounded-full ${
+                        item.tone === "green"
+                          ? "bg-green-500"
+                          : item.tone === "red"
+                            ? "bg-red-500"
+                            : item.tone === "blue"
+                              ? "bg-blue-500"
+                              : "bg-purple-500"
+                      }`}
+                      style={{ width: `${width}%` }}
+                    />
+                  </div>
+                  <span className="truncate text-right text-[11px] font-black text-zinc-300">
+                    {formatMoney(item.value)}
+                  </span>
+                </div>
+              );
+            })}
           </div>
+
+          <div className="mt-4 grid grid-cols-3 gap-2 text-xs">
+            <div className="rounded-xl bg-green-500/10 px-3 py-2 text-green-300">
+              <b>Income</b><br />{formatMoney(yearlyIncome)}
+            </div>
+            <div className="rounded-xl bg-red-500/10 px-3 py-2 text-red-300">
+              <b>Expenses</b><br />{formatMoney(yearlyExpenses)}
+            </div>
+            <div className="rounded-xl bg-orange-500/10 px-3 py-2 text-orange-300">
+              <b>Net</b><br />{formatMoney(yearlySavings)}
+            </div>
+          </div>
+
           <p className="mt-4 text-xs leading-5 text-zinc-400">
-            Full-time salary now pays automatically when you advance to the next year.
+            Salary, business income, rent, expenses, and debt interest are calculated when you age up.
           </p>
         </div>
       </div>
@@ -1560,142 +1781,220 @@ function StoryTimelinePanel({ life }: { life: LifeStats }) {
 function EconomyPage({
   life,
   economy,
+  updateLife,
 }: {
   life: LifeStats;
   economy: EconomyBreakdown;
+  updateLife: (life: LifeStats) => void;
 }) {
   const positivePassive = economy.netPassiveYear >= 0;
   const hasNoExpenses = economy.totalExpenses <= 0;
+  const yearlySalary = life.jobId === "unemployed" ? 0 : life.salary;
+  const totalYearlyIncome =
+    yearlySalary +
+    getPartTimeIncome(life) +
+    economy.businessIncomeEstimate +
+    economy.rentalIncomeEstimate;
+  const monthlyNet = Math.round((totalYearlyIncome - economy.totalExpenses) / 12);
+  const debtRatio = economy.totalAssets > 0 ? Math.round((life.debt / Math.max(1, economy.totalAssets)) * 100) : life.debt > 0 ? 100 : 0;
+  const safetyMonths = economy.totalExpenses > 0 ? Math.floor(life.cash / Math.max(1, economy.totalExpenses / 12)) : 99;
+  const financeStatus =
+    life.debt > economy.totalAssets
+      ? "Debt heavy"
+      : monthlyNet >= 0 && safetyMonths >= 6
+        ? "Healthy"
+        : monthlyNet >= 0
+          ? "Stable"
+          : "Needs work";
 
   return (
-    <TabCard title="Economy">
-      <div className="rounded-3xl border border-orange-500/30 bg-orange-500/10 p-5">
-        <p className="text-xs font-black uppercase tracking-[0.25em] text-orange-400">
-          Financial Status
-        </p>
+    <TabCard title="Money">
+      <div className="rounded-[2rem] border border-orange-500/30 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.14),transparent_35%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-5">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-black uppercase tracking-[0.25em] text-orange-400">
+              Financial Command Center
+            </p>
+            <h2 className="mt-2 text-3xl font-black text-white">{financeStatus}</h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+              Track income, expenses, debt, assets, and cashflow. Use loans carefully, pay down debt, and build income sources.
+            </p>
+          </div>
+          <span className={`rounded-full px-3 py-1.5 text-xs font-black ${
+            monthlyNet >= 0 ? "bg-green-500/15 text-green-300" : "bg-red-500/15 text-red-300"
+          }`}>
+            Monthly net {formatMoney(monthlyNet)}
+          </span>
+        </div>
 
-        <div className="mt-4 grid grid-cols-2 gap-3">
+        <div className="mt-5 grid grid-cols-2 gap-3 xl:grid-cols-5">
           <MainStat label="Cash" value={formatMoney(life.cash)} />
           <MainStat label="Net Worth" value={formatMoney(life.netWorth)} />
           <MainStat label="Debt" value={formatMoney(life.debt)} />
           <MainStat label="Assets" value={formatMoney(economy.totalAssets)} />
+          <MainStat label="Passive Year" value={formatMoney(economy.netPassiveYear)} />
         </div>
       </div>
 
-      <div
-        className={`mt-5 rounded-3xl border p-5 ${
-          hasNoExpenses
-            ? "border-zinc-700 bg-zinc-900"
-            : positivePassive
-              ? "border-green-500/30 bg-green-500/10"
-              : "border-red-500/30 bg-red-500/10"
-        }`}
-      >
-        <p className="text-xs font-black uppercase tracking-[0.25em] text-zinc-400">
-          Passive Year
-        </p>
-
-        <p
-          className={`mt-2 text-3xl font-black ${
+      <div className="mt-5 grid gap-4 xl:grid-cols-[1fr_0.9fr]">
+        <div
+          className={`rounded-[1.6rem] border p-5 ${
             hasNoExpenses
-              ? "text-zinc-200"
+              ? "border-zinc-700 bg-zinc-900"
               : positivePassive
-                ? "text-green-400"
-                : "text-red-400"
+                ? "border-green-500/30 bg-green-500/10"
+                : "border-red-500/30 bg-red-500/10"
           }`}
         >
-          {formatMoney(economy.netPassiveYear)}
-        </p>
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-zinc-400">
+            Yearly Cashflow
+          </p>
+          <p
+            className={`mt-2 text-4xl font-black ${
+              hasNoExpenses
+                ? "text-zinc-200"
+                : positivePassive
+                  ? "text-green-400"
+                  : "text-red-400"
+            }`}
+          >
+            {formatMoney(totalYearlyIncome - economy.totalExpenses)}
+          </p>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">
+            Income {formatMoney(totalYearlyIncome)} minus yearly expenses {formatMoney(economy.totalExpenses)}.
+          </p>
 
-        <p className="mt-2 text-sm leading-6 text-zinc-400">
-          {hasNoExpenses
-            ? "You currently have no yearly expenses."
-            : "Business income plus rental income minus housing, upkeep, debt interest, and property manager fees."}
-        </p>
+          <div className="mt-4 grid gap-2 sm:grid-cols-3">
+            <MiniAssetStat label="Safety" value={safetyMonths >= 99 ? "No expense" : `${safetyMonths} mo`} />
+            <MiniAssetStat label="Debt/assets" value={`${debtRatio}%`} />
+            <MiniAssetStat label="Monthly net" value={formatMoney(monthlyNet)} />
+          </div>
+        </div>
+
+        <div className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-5">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+            Money Actions
+          </p>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            Quick tools for debt, loans, and investing.
+          </p>
+
+          <div className="mt-4 grid gap-3 xl:grid-cols-3">
+            <details className="rounded-2xl bg-orange-500/10 p-3">
+              <summary className="cursor-pointer font-black text-white">Take Loan</summary>
+              <p className="mt-1 text-xs text-zinc-400">
+                Choose a percentage of your loan limit: {formatMoney(getLoanLimit(life))}
+              </p>
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {[25, 50, 100, 200].map((percent) => (
+                  <button
+                    key={percent}
+                    onClick={() => updateLife(takeLoan(life, percent))}
+                    className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
+                  >
+                    {percent}%
+                  </button>
+                ))}
+              </div>
+            </details>
+
+            <details className="rounded-2xl bg-red-500/10 p-3">
+              <summary className="cursor-pointer font-black text-white">Pay Debt</summary>
+              <p className="mt-1 text-xs text-zinc-400">
+                Choose how much of your current debt to pay: {formatMoney(life.debt)}
+              </p>
+              <div className="mt-3 grid grid-cols-4 gap-2">
+                {[10, 25, 50, 100].map((percent) => (
+                  <button
+                    key={percent}
+                    onClick={() => updateLife(payDebt(life, percent))}
+                    className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
+                  >
+                    {percent}%
+                  </button>
+                ))}
+              </div>
+            </details>
+
+            <button
+              onClick={() => updateLife(invest(life))}
+              className="rounded-2xl bg-green-500/10 p-3 text-left transition hover:bg-green-500/15"
+            >
+              <p className="font-black text-white">Invest</p>
+              <p className="mt-1 text-xs text-zinc-400">Uses finance, intelligence, and luck. Not guaranteed.</p>
+            </button>
+          </div>
+        </div>
       </div>
 
-      <h3 className="mb-3 mt-6 text-lg font-black">Income</h3>
+      <div className="mt-6 grid gap-4 xl:grid-cols-2">
+        <div className="rounded-[1.6rem] bg-green-500/5 p-4 shadow-inner shadow-green-950/10">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-lg font-black text-white">Income Sources</h3>
+            <span className="text-sm font-black text-green-400">{formatMoney(totalYearlyIncome)}</span>
+          </div>
 
-      <div className="space-y-3">
-        <SimpleMoneyRow
-          label="Full-time work"
-          value={`${formatMoney(economy.workPayPerClick)}/action`}
-          description={
-            life.jobId === "unemployed"
-              ? "Odd jobs give quick cash, but they are not a stable yearly income."
-              : "This is what you earn when you use a Work Full-Time action. Salary is handled yearly."
-          }
-          type="income"
-        />
+          <div className="space-y-3">
+            <SimpleMoneyRow
+              label="Full-time salary"
+              value={formatMoney(yearlySalary)}
+              description={life.jobId === "unemployed" ? "You do not have a full-time job yet." : "Paid automatically when you age up."}
+              type="income"
+            />
+            <SimpleMoneyRow
+              label="Part-time jobs"
+              value={formatMoney(getPartTimeIncome(life))}
+              description={(life.partTimeJobs || []).length === 0 ? "You do not have any part-time jobs yet." : "Yearly income from active part-time jobs."}
+              type="income"
+            />
+            <SimpleMoneyRow
+              label="Business income"
+              value={formatMoney(economy.businessIncomeEstimate)}
+              description={life.business === "None" ? "You do not own a business yet." : "Estimated passive yearly income from your active business."}
+              type="income"
+            />
+            <SimpleMoneyRow
+              label="Rental income"
+              value={formatMoney(economy.rentalIncomeEstimate)}
+              description={`${economy.occupiedRentals} occupied rental(s), ${economy.vacantRentals} vacant rental(s).`}
+              type="income"
+            />
+          </div>
+        </div>
 
-        <SimpleMoneyRow
-          label="Part-time jobs"
-          value={formatMoney(getPartTimeIncome(life))}
-          description={
-            (life.partTimeJobs || []).length === 0
-              ? "You do not have any part-time jobs yet."
-              : "This is the yearly income from your active part-time jobs."
-          }
-          type="income"
-        />
+        <div className="rounded-[1.6rem] bg-red-500/5 p-4 shadow-inner shadow-red-950/10">
+          <div className="mb-3 flex items-center justify-between gap-3">
+            <h3 className="text-lg font-black text-white">Expenses</h3>
+            <span className="text-sm font-black text-red-300">{formatMoney(economy.totalExpenses)}</span>
+          </div>
 
-        <SimpleMoneyRow
-          label="Business income"
-          value={formatMoney(economy.businessIncomeEstimate)}
-          description={
-            life.business === "None"
-              ? "You do not own a business yet."
-              : "Estimated passive yearly income from your business."
-          }
-          type="income"
-        />
-
-        <SimpleMoneyRow
-          label="Rental income"
-          value={formatMoney(economy.rentalIncomeEstimate)}
-          description={`${economy.occupiedRentals} occupied rental(s), ${economy.vacantRentals} vacant rental(s).`}
-          type="income"
-        />
-      </div>
-
-      <h3 className="mb-3 mt-6 text-lg font-black">Expenses</h3>
-
-      <div className="space-y-3">
-        <SimpleMoneyRow
-          label="Housing"
-          value={formatMoney(economy.housingCost)}
-          description={
-            life.currentHousing.type === "none"
-              ? "You have no selected housing, so yearly housing cost is $0."
-              : `${life.currentHousing.name} yearly cost.`
-          }
-          type="expense"
-        />
-
-        <SimpleMoneyRow
-          label="Asset upkeep"
-          value={formatMoney(economy.assetUpkeep)}
-          description="Cars and homes need upkeep. If you cannot pay, condition gets worse."
-          type="expense"
-        />
-
-        <SimpleMoneyRow
-          label="Debt interest"
-          value={formatMoney(economy.debtInterest)}
-          description={
-            life.debt <= 0
-              ? "You have no debt, so interest is $0."
-              : "Debt grows every year from interest."
-          }
-          type="expense"
-        />
-
-        <SimpleMoneyRow
-          label="Property manager fees"
-          value={formatMoney(economy.propertyManagerFees)}
-          description="Managers take a percentage of collected rent."
-          type="expense"
-        />
+          <div className="space-y-3">
+            <SimpleMoneyRow
+              label="Housing"
+              value={formatMoney(economy.housingCost)}
+              description={life.currentHousing.type === "none" ? "You have no selected housing." : `${life.currentHousing.name} yearly cost.`}
+              type="expense"
+            />
+            <SimpleMoneyRow
+              label="Asset upkeep"
+              value={formatMoney(economy.assetUpkeep)}
+              description="Cars and homes need upkeep. Poor condition hurts value."
+              type="expense"
+            />
+            <SimpleMoneyRow
+              label="Debt interest"
+              value={formatMoney(economy.debtInterest)}
+              description={life.debt <= 0 ? "You have no debt." : "Debt grows every year from interest."}
+              type="expense"
+            />
+            <SimpleMoneyRow
+              label="Property manager fees"
+              value={formatMoney(economy.propertyManagerFees)}
+              description="Managers take a percentage of collected rent."
+              type="expense"
+            />
+          </div>
+        </div>
       </div>
     </TabCard>
   );
@@ -1713,7 +2012,7 @@ function SimpleMoneyRow({
   type: "income" | "expense";
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-zinc-900 p-4">
+    <div className="rounded-2xl bg-zinc-900/70 p-4">
       <div className="flex items-start justify-between gap-3">
         <div>
           <p className="text-sm font-black text-white">{label}</p>
@@ -1951,7 +2250,7 @@ function ActionsRouter({
           <div className="grid gap-4 xl:grid-cols-[0.9fr_1.1fr]">
             <StudentLoanPanel life={life} updateLife={updateLife} />
 
-            <div className="rounded-[2rem] border border-zinc-800 bg-zinc-950/80 p-5">
+            <div className="rounded-[2rem] bg-zinc-950/55 p-5">
               <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
                 Education Plan
               </p>
@@ -2032,6 +2331,61 @@ function ActionsRouter({
     );
   }
 
+  if (actionPage === "oddJobs") {
+    const oddJobs = [
+      {
+        icon: "📦",
+        title: "Warehouse Shift",
+        description: "A quick manual shift. Reliable cash, a little stress.",
+        action: () => updateLife(work(life)),
+      },
+      {
+        icon: "🚗",
+        title: "Delivery Run",
+        description: "Deliver orders for fast starter income.",
+        action: () => updateLife(work(life)),
+      },
+      {
+        icon: "🧹",
+        title: "Cleaning Job",
+        description: "Low skill work. Good if you need money right now.",
+        action: () => updateLife(work(life)),
+      },
+      {
+        icon: "🎪",
+        title: "Event Helper",
+        description: "One-day event work. Builds a little charisma and cash.",
+        action: () => updateLife(work(life)),
+      },
+    ];
+
+    return (
+      <ActionSubPage title="Odd Jobs" onBack={() => setActionPage("career")}>
+        <div className="rounded-[2rem] bg-zinc-950/55 p-5">
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+            Quick Work
+          </p>
+          <h3 className="mt-2 text-2xl font-black text-white">Choose an odd job</h3>
+          <p className="mt-2 text-sm leading-6 text-zinc-400">
+            Odd jobs are short-term work for quick cash. They cost energy and are not a replacement for a full-time career.
+          </p>
+        </div>
+
+        <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+          {oddJobs.map((job) => (
+            <CareerActionCard
+              key={job.title}
+              icon={job.icon}
+              title={job.title}
+              description={job.description}
+              onClick={job.action}
+            />
+          ))}
+        </div>
+      </ActionSubPage>
+    );
+  }
+
   if (actionPage === "career") {
     const activePartTimeJobs = (life.partTimeJobs || [])
       .map((jobId) => getPartTimeJobById(jobId))
@@ -2100,10 +2454,10 @@ function ActionsRouter({
             title={life.job === "Unemployed" ? "Do Odd Jobs" : "Improve Performance"}
             description={
               life.job === "Unemployed"
-                ? "Do basic odd jobs for quick cash while unemployed."
+                ? "Open a list of odd jobs for quick cash while unemployed."
                 : "Salary is automatic yearly. Use this to build promotion progress and career XP."
             }
-            onClick={() => updateLife(life.job === "Unemployed" ? work(life) : focusAtWork(life))}
+            onClick={() => life.job === "Unemployed" ? setActionPage("oddJobs") : updateLife(focusAtWork(life))}
           />
           <CareerActionCard
             icon="🤝"
@@ -2117,12 +2471,14 @@ function ActionsRouter({
             description="Ask your boss for the next role in your career path."
             onClick={() => updateLife(chasePromotion(life))}
           />
-          <CareerActionCard
-            icon="🚪"
-            title="Quit Full-Time Job"
-            description="Leave your current job. Reduces stress, but removes salary."
-            onClick={() => updateLife(quitFullTimeJob(life))}
-          />
+          {life.jobId !== "unemployed" && (
+            <CareerActionCard
+              icon="🚪"
+              title="Quit Full-Time Job"
+              description="Leave your current job. Reduces stress, but removes salary."
+              onClick={() => updateLife(quitFullTimeJob(life))}
+            />
+          )}
           <CareerActionCard
             icon="🧾"
             title="Apply for Job"
@@ -2140,93 +2496,6 @@ function ActionsRouter({
           />
         </div>
 
-        <div className="mt-5 rounded-[2rem] border border-zinc-800 bg-zinc-950/80 p-5">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
-                Part-Time Jobs
-              </p>
-              <h3 className="mt-2 text-2xl font-black text-white">
-                Small jobs before the big career
-              </h3>
-              <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
-                Hold up to 2 part-time jobs. Work them once per year for extra income while studying or building a full-time career.
-              </p>
-            </div>
-            <div className="rounded-2xl border border-zinc-800 bg-black/30 px-4 py-3 text-right">
-              <p className="text-[11px] font-black uppercase tracking-[0.16em] text-zinc-500">Active</p>
-              <p className="mt-1 text-lg font-black text-white">{activePartTimeJobs.length}/2</p>
-            </div>
-          </div>
-
-          {activePartTimeJobs.length > 0 && (
-            <div className="mt-4 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div>
-                  <p className="font-black text-orange-200">Active part-time jobs</p>
-                  <p className="mt-1 text-sm text-zinc-400">
-                    Estimated yearly income: {formatMoney(getPartTimeIncome(life))}
-                  </p>
-                </div>
-                <button
-                  onClick={() => updateLife(workPartTimeJobs(life))}
-                  className="rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
-                >
-                  Work Part-Time Jobs
-                </button>
-              </div>
-
-              <div className="mt-3 grid gap-3 md:grid-cols-2">
-                {activePartTimeJobs.map((job) => (
-                  <div key={job.id} className="rounded-2xl border border-zinc-800 bg-black/25 p-4">
-                    <div className="flex items-start justify-between gap-3">
-                      <div>
-                        <p className="font-black text-white">{job.name}</p>
-                        <p className="mt-1 text-sm text-zinc-400">{formatMoney(job.pay)}/year</p>
-                      </div>
-                      <button
-                        onClick={() => updateLife(quitPartTimeJob(life, job.id))}
-                        className="rounded-xl border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs font-black text-red-300 transition hover:border-red-400"
-                      >
-                        Quit
-                      </button>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {partTimeJobOptions.map((job) => {
-              const active = (life.partTimeJobs || []).includes(job.id);
-              return (
-                <button
-                  key={job.id}
-                  onClick={() => updateLife(takePartTimeJob(life, job.id))}
-                  className={`rounded-[1.4rem] border p-4 text-left transition active:scale-[0.99] ${
-                    active
-                      ? "border-green-500/40 bg-green-500/10"
-                      : "border-zinc-800 bg-black/25 hover:border-orange-400/60"
-                  }`}
-                >
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <p className="font-black text-white">{job.name}</p>
-                      <p className="mt-1 text-sm leading-5 text-zinc-400">{job.description}</p>
-                    </div>
-                    <span className="rounded-full bg-zinc-950 px-3 py-1 text-xs font-black text-orange-300">
-                      {formatMoney(job.pay)}
-                    </span>
-                  </div>
-                  <p className="mt-3 text-xs font-bold text-zinc-500">
-                    Stress +{job.stressGain} • Discipline +{job.disciplineGain}
-                  </p>
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </ActionSubPage>
     );
   }
@@ -2235,16 +2504,80 @@ function ActionsRouter({
     if (!selectedJobCategory) {
       return (
         <ActionSubPage title="Apply for Job" onBack={() => setActionPage("career")}>
-          <div className="rounded-[2rem] border border-orange-500/20 bg-orange-500/10 p-5">
+          <div className="rounded-[2rem] bg-orange-500/10 p-5">
             <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
               Job Directory
             </p>
-            <h3 className="mt-2 text-2xl font-black text-white">Choose a career path</h3>
+            <h3 className="mt-2 text-2xl font-black text-white">Choose work type</h3>
             <p className="mt-2 text-sm leading-6 text-zinc-400">
-              Pick a category first, then apply for a specific full-time job.
+              Apply for a full-time career or take part-time jobs for extra yearly income.
             </p>
           </div>
 
+          <div className="mt-4 rounded-[2rem] bg-zinc-950/55 p-5">
+            <div className="flex flex-wrap items-start justify-between gap-3">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                  Part-Time Jobs
+                </p>
+                <h3 className="mt-2 text-2xl font-black text-white">
+                  Small jobs before the big career
+                </h3>
+                <p className="mt-2 max-w-3xl text-sm leading-6 text-zinc-400">
+                  Hold up to 2 part-time jobs. Work them once per year for extra income.
+                </p>
+              </div>
+              <div className="rounded-2xl bg-black/30 px-4 py-3 text-right">
+                <p className="text-[11px] font-black uppercase tracking-[0.16em] text-zinc-500">Active</p>
+                <p className="mt-1 text-lg font-black text-white">{(life.partTimeJobs || []).length}/2</p>
+              </div>
+            </div>
+
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {partTimeJobOptions.map((job) => {
+                const active = (life.partTimeJobs || []).includes(job.id);
+
+                return (
+                  <button
+                    key={job.id}
+                    onClick={() => updateLife(active ? quitPartTimeJob(life, job.id) : takePartTimeJob(life, job.id))}
+                    className={`rounded-2xl p-4 text-left transition ${
+                      active
+                        ? "bg-green-500/10 hover:bg-green-500/15"
+                        : "bg-black/25 hover:bg-zinc-900/80"
+                    }`}
+                  >
+                    <div className="flex items-start justify-between gap-3">
+                      <p className="font-black text-white">{job.name}</p>
+                      <span className="rounded-full bg-orange-500/10 px-2 py-1 text-xs font-black text-orange-300">
+                        {formatMoney(job.pay)}
+                      </span>
+                    </div>
+                    <p className="mt-2 text-sm leading-5 text-zinc-400">{job.description}</p>
+                    <p className="mt-3 text-xs text-zinc-500">
+                      Stress +{job.stressGain} • Discipline +{job.disciplineGain}
+                    </p>
+                    <span className={`mt-3 block rounded-xl px-3 py-2 text-center text-xs font-black ${
+                      active ? "bg-green-500 text-black" : "bg-orange-500 text-black"
+                    }`}>
+                      {active ? "Quit Part-Time" : "Take Job"}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {(life.partTimeJobs || []).length > 0 && (
+              <button
+                onClick={() => updateLife(workPartTimeJobs(life))}
+                className="mt-4 w-full rounded-2xl bg-orange-500 px-4 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+              >
+                Work Part-Time Jobs
+              </button>
+            )}
+          </div>
+
+          <h3 className="mb-3 mt-6 text-lg font-black">Full-time careers</h3>
           <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-3">
             {jobCategories.map((category) => (
               <DirectoryCard
@@ -2294,52 +2627,67 @@ function ActionsRouter({
     const businessStageName = getBusinessStageName(life.businessStage);
     const riskLabel = getBusinessRiskLabel(life.businessRisk);
     const ownedBusinesses = life.businesses || [];
-    const investmentGuide =
-      life.skills.finance >= 5
-        ? "Strong finance skill. Better odds."
-        : life.intelligence >= 60
-          ? "Good intelligence. Decent odds."
-          : "Risky until finance/intelligence improves.";
 
     return (
       <ActionSubPage
-        title="Business & Investing"
+        title="Business Hub"
         onBack={() => setActionPage("main")}
       >
-        <div className="grid gap-4 xl:grid-cols-[1.1fr_0.9fr]">
+        {!hasBusiness ? (
           <div className="rounded-[1.6rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_34%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-4">
             <div className="flex flex-wrap items-start justify-between gap-3">
               <div>
                 <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
-                  Business Hub
+                  Start a Business
                 </p>
-                <h3 className="mt-1 text-2xl font-black text-white">
-                  {hasBusiness ? life.business : "No active business"}
-                </h3>
-                <p className="mt-1 max-w-2xl text-sm leading-6 text-zinc-400">
-                  {hasBusiness
-                    ? `${businessType?.category || "Business"} • ${businessStageName} • ${riskLabel} risk. Use actions to improve quality, brand, revenue, and management.`
-                    : "Start one or more businesses. You can own multiple companies and choose which one to manage."}
+                <h3 className="mt-1 text-2xl font-black text-white">Choose your first company</h3>
+                <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+                  Pick a business type. Product businesses like Game Studio, Minecraft Server, Mobile App, and Roblox Game use the new lifecycle system.
                 </p>
               </div>
               <span className="rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-xs font-black text-orange-300">
-                {ownedBusinesses.length} owned
+                Business only
               </span>
             </div>
 
-            <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
-              <MainStat label="Cash" value={formatMoney(life.cash)} />
-              <MainStat label="Value" value={formatMoney(life.businessValue)} />
-              <MainStat label="Revenue" value={formatMoney(life.businessRevenue)} />
-              <MainStat label="Risk" value={`${life.businessRisk}/100`} />
+            <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+              {businessTypes.map((type) => (
+                <BusinessTypeCard
+                  key={type.id}
+                  type={type}
+                  canAfford={life.cash >= type.startCost}
+                  onClick={() => updateLife(startBusiness(life, type.id))}
+                />
+              ))}
             </div>
 
-            {ownedBusinesses.length > 0 && (
-              <div className="mt-4">
-                <p className="mb-2 text-xs font-black uppercase tracking-[0.18em] text-zinc-500">
-                  Your Businesses
-                </p>
-                <div className="grid gap-2 md:grid-cols-2">
+            <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/25 p-4">
+              <p className="text-sm font-black text-zinc-100">Money actions moved out</p>
+              <p className="mt-1 text-sm leading-6 text-zinc-400">
+                Loans, debt payments, and investing should be handled from the Economy/Money overview. This page is now focused on building and managing businesses.
+              </p>
+            </div>
+          </div>
+        ) : (
+          <div className="space-y-4">
+            <div className="rounded-[1.6rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_34%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-4">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                    Active Business
+                  </p>
+                  <h3 className="mt-1 text-2xl font-black text-white">{life.business}</h3>
+                  <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+                    {businessType?.category || "Business"} • {businessStageName} • {riskLabel} risk. Manage the current company, choose the next move, and keep the business alive.
+                  </p>
+                </div>
+                <span className="rounded-full border border-orange-500/25 bg-orange-500/10 px-3 py-1 text-xs font-black text-orange-300">
+                  {ownedBusinesses.length} owned
+                </span>
+              </div>
+
+              {ownedBusinesses.length > 1 && (
+                <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
                   {ownedBusinesses.map((business) => (
                     <BusinessPortfolioCard
                       key={business.id}
@@ -2349,158 +2697,45 @@ function ActionsRouter({
                     />
                   ))}
                 </div>
+              )}
+
+              <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
+                <BusinessMetricCard label="Value" value={formatMoney(life.businessValue)} helper="Company worth" />
+                <BusinessMetricCard label="Revenue" value={formatMoney(life.businessRevenue)} helper="Revenue base" />
+                <BusinessMetricCard label="Risk" value={`${life.businessRisk}/100`} helper={riskLabel} />
+                <BusinessMetricCard label="Payroll" value={formatMoney(life.businessPayroll)} helper={`${life.businessEmployees} staff`} />
+                <BusinessMetricCard label="Owner" value={`${life.businessOwnership || 100}%`} helper="Profit share" />
+                <BusinessMetricCard label="Stage" value={businessStageName} helper="Company size" />
               </div>
+            </div>
+
+            <BusinessRecommendedNextMove life={life} />
+            {life.businessTypeId === "real-estate-company" && (
+              <RealEstateCompanyPanel life={life} updateLife={updateLife} />
             )}
-          </div>
+            {isProductBusinessType(life.businessTypeId) && <BusinessLifecycleTimeline life={life} />}
+            <BusinessActionCenter life={life} updateLife={updateLife} />
 
-          <div className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
-            <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
-              Money Tools
-            </p>
-            <h3 className="mt-1 text-2xl font-black text-white">Personal finance</h3>
-            <p className="mt-1 text-sm leading-6 text-zinc-400">
-              Keep this compact: choose an action first, then choose the amount.
-            </p>
+            <BusinessFinanceTools life={life} updateLife={updateLife} />
+            <BusinessMarketPanel life={life} updateLife={updateLife} />
 
-            <div className="mt-4 grid gap-2 sm:grid-cols-2">
-              <button
-                onClick={() => setFinancePanel(financePanel === "payDebt" ? "none" : "payDebt")}
-                className="rounded-2xl border border-zinc-800 bg-black/25 p-4 text-left transition hover:border-orange-400/60"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-black text-white">Pay Debt</p>
-                  <span className="text-xs font-black text-red-300">{formatMoney(life.debt)}</span>
-                </div>
-                <p className="mt-1 text-sm text-zinc-400">Pay a percent of your debt.</p>
-              </button>
-
-              <button
-                onClick={() => setFinancePanel(financePanel === "takeLoan" ? "none" : "takeLoan")}
-                className="rounded-2xl border border-zinc-800 bg-black/25 p-4 text-left transition hover:border-orange-400/60"
-              >
-                <div className="flex items-center justify-between gap-3">
-                  <p className="font-black text-white">Take Loan</p>
-                  <span className="text-xs font-black text-orange-300">{formatMoney(getLoanLimit(life))}</span>
-                </div>
-                <p className="mt-1 text-sm text-zinc-400">Borrow based on yearly income.</p>
-              </button>
-            </div>
-
-            {financePanel === "payDebt" && (
-              <div className="mt-3 rounded-2xl border border-red-500/20 bg-red-500/10 p-3">
-                <p className="text-sm font-black text-red-100">How much debt do you want to pay?</p>
-                <div className="mt-3 grid grid-cols-4 gap-2">
-                  {[10, 25, 50, 100].map((percent) => (
-                    <button
-                      key={percent}
-                      onClick={() => updateLife(payDebt(life, percent))}
-                      className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
-                    >
-                      {percent}%
-                    </button>
-                  ))}
-                </div>
+            <details className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+              <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-zinc-400">
+                Advanced details
+              </summary>
+              <div className="mt-4">
+                <BusinessSpecialStatsPanel life={life} />
+                {isProductBusinessType(life.businessTypeId) && (
+                  <BusinessProductLifecyclePanel life={life} updateLife={updateLife} compact />
+                )}
+                <BusinessMilestonesPanel life={life} />
               </div>
-            )}
+            </details>
 
-            {financePanel === "takeLoan" && (
-              <div className="mt-3 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3">
-                <p className="text-sm font-black text-orange-100">How much do you want to borrow?</p>
-                <p className="mt-1 text-xs text-zinc-400">Based on yearly salary/income profile.</p>
-                <div className="mt-3 grid grid-cols-4 gap-2">
-                  {[25, 50, 100, 200].map((percent) => (
-                    <button
-                      key={percent}
-                      onClick={() => updateLife(takeLoan(life, percent))}
-                      className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
-                    >
-                      {percent}%
-                    </button>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            <div className="mt-3 grid gap-2 sm:grid-cols-2">
-              <BusinessActionCard
-                icon="📈"
-                title="Invest"
-                description={`Uses finance, intelligence, and luck. ${investmentGuide}`}
-                onClick={() => updateLife(invest(life))}
-              />
-              <BusinessActionCard
-                icon="🎲"
-                title="Take Risk"
-                description="A gambling-style money action. Big upside, but can lose cash and raise stress."
-                onClick={() => updateLife(takeRisk(life))}
-              />
-            </div>
-          </div>
-        </div>
-
-        <div className="mt-4 rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
-          <div className="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
-                Start Another Business
-              </p>
-              <h3 className="mt-1 text-2xl font-black text-white">Choose a business type</h3>
-              <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
-                You can own multiple businesses. Starting a new one makes it the active business.
-              </p>
-            </div>
-          </div>
-
-          <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
-            {businessTypes.map((type) => (
-              <BusinessTypeCard
-                key={type.id}
-                type={type}
-                canAfford={life.cash >= type.startCost}
-                onClick={() => updateLife(startBusiness(life, type.id))}
-              />
-            ))}
-          </div>
-        </div>
-
-        {hasBusiness && (
-          <div className="mt-4 rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
-            <div className="flex flex-wrap items-start justify-between gap-3">
-              <div>
-                <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
-                  Manage Active Business
-                </p>
-                <h3 className="mt-1 text-2xl font-black text-white">{life.business}</h3>
-                <p className="mt-1 text-sm leading-6 text-zinc-400">
-                  Improve quality to make launches safer. Build brand for marketing. Train management to control payroll and risk.
-                </p>
-              </div>
-            </div>
-
-            <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-3 xl:grid-cols-6">
-              <BusinessMetricCard label="Quality" value={`${life.businessProductQuality || 0}/100`} helper="Launch safety" />
-              <BusinessMetricCard label="Brand" value={`${life.businessBrand || 0}/100`} helper="Marketing power" />
-              <BusinessMetricCard label="Manage" value={`${life.businessManagement || 0}/100`} helper="Risk control" />
-              <BusinessMetricCard label="Payroll" value={formatMoney(life.businessPayroll)} helper={`${life.businessEmployees} staff`} />
-              <BusinessMetricCard label="Owner" value={`${life.businessOwnership || 100}%`} helper="Profit share" />
-              <BusinessMetricCard label="Stage" value={businessStageName} helper="Company size" />
-            </div>
-
-            <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
-              <BusinessActionCard icon="🛠️" title="Work on Business" description="General growth: value, revenue, quality, and management." onClick={() => updateLife(workOnBusiness(life))} />
-              <BusinessActionCard icon="✨" title="Improve Product" description="Improves quality and lowers risk over time." onClick={() => updateLife(improveProduct(life))} />
-              <BusinessActionCard icon="📣" title="Marketing Campaign" description="Builds brand and revenue. Can raise risk." onClick={() => updateLife(marketingCampaign(life))} />
-              <BusinessActionCard icon="🚀" title="Launch Product" description="High upside launch. Quality and brand improve odds." onClick={() => updateLife(launchProduct(life))} />
-              <BusinessActionCard icon="👥" title="Hire Employee" description="Scales faster, but payroll rises." onClick={() => updateLife(hireEmployee(life))} />
-              <BusinessActionCard icon="🎓" title="Train Employees" description="Improves management and reduces long-term risk." onClick={() => updateLife(trainEmployees(life))} />
-              <BusinessActionCard icon="✂️" title="Cut Costs" description="Reduces risk and improves control." onClick={() => updateLife(cutCosts(life))} />
-              <BusinessActionCard icon="💼" title="Seek Investor" description="Raise cash but sell ownership." onClick={() => updateLife(seekInvestor(life))} />
-            </div>
-
-            <div className="mt-3">
+            <div className="rounded-[1.6rem] bg-red-500/5 p-4 shadow-inner shadow-red-950/10">
               <ActionButton
                 title="Sell Active Business"
-                description="Sell the business you are currently managing. Other businesses stay owned."
+                description="Sell only the business you are currently managing. Other businesses stay owned."
                 onClick={() => updateLife(sellBusiness(life))}
               />
             </div>
@@ -2510,26 +2745,39 @@ function ActionsRouter({
     );
   }
 
-  const actionsUsed = getActionsUsed(life);
-  const actionsFull = actionsUsed >= ACTIONS_PER_YEAR;
-
   return (
     <>
-      <div
-        className={`mb-4 rounded-2xl border p-4 ${
-          actionsFull
-            ? "border-orange-400 bg-orange-500/15"
-            : "border-orange-500/30 bg-orange-500/10"
-        }`}
-      >
-        <p className="text-sm font-black text-orange-300">
-          Actions used: {actionsUsed}/{ACTIONS_PER_YEAR}
-        </p>
-        <p className="mt-1 text-sm text-zinc-400">
-          {actionsFull
-            ? "You have used all actions this year. Press End Year."
-            : "Choose actions below. Press End Year when ready."}
-        </p>
+      <div className="mb-4 rounded-2xl bg-zinc-950/70 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+            <p className="text-sm font-black text-white">Energy</p>
+            <p className="mt-1 text-xs text-zinc-500">
+              {life.energy ?? MAX_ENERGY}/100 • {getEnergyStatus(life)}
+            </p>
+          </div>
+          <span className={`rounded-full px-3 py-1 text-xs font-black ${
+            (life.energy ?? MAX_ENERGY) < 15
+              ? "bg-red-500/15 text-red-300"
+              : (life.energy ?? MAX_ENERGY) < 45
+                ? "bg-yellow-500/15 text-yellow-300"
+                : "bg-green-500/15 text-green-300"
+          }`}>
+            {getEnergyStatus(life)}
+          </span>
+        </div>
+
+        <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-900">
+          <div
+            className={`h-full rounded-full ${
+              (life.energy ?? MAX_ENERGY) < 15
+                ? "bg-red-500"
+                : (life.energy ?? MAX_ENERGY) < 45
+                  ? "bg-yellow-400"
+                  : "bg-green-400"
+            }`}
+            style={{ width: `${Math.max(0, Math.min(100, life.energy ?? MAX_ENERGY))}%` }}
+          />
+        </div>
       </div>
 
       {life.yearNotes.length > 0 && (
@@ -3767,7 +4015,32 @@ function AssetScene({
         )}
         {scene === "goldChain" && (
           <>
-            
+            <path
+              d="M48 58 C58 34 142 34 152 58"
+              fill="none"
+              stroke="#fbbf24"
+              strokeWidth="7"
+              strokeLinecap="round"
+              opacity="0.95"
+            />
+            <path
+              d="M58 62 C70 90 130 90 142 62"
+              fill="none"
+              stroke="#d97706"
+              strokeWidth="6"
+              strokeLinecap="round"
+              opacity="0.9"
+            />
+            <g fill="none" stroke="#fde68a" strokeWidth="4" opacity="0.95">
+              <ellipse cx="59" cy="58" rx="9" ry="6" transform="rotate(-25 59 58)" />
+              <ellipse cx="76" cy="50" rx="9" ry="6" transform="rotate(-15 76 50)" />
+              <ellipse cx="94" cy="47" rx="9" ry="6" />
+              <ellipse cx="112" cy="48" rx="9" ry="6" transform="rotate(12 112 48)" />
+              <ellipse cx="130" cy="53" rx="9" ry="6" transform="rotate(20 130 53)" />
+              <ellipse cx="145" cy="63" rx="9" ry="6" transform="rotate(35 145 63)" />
+            </g>
+            <circle cx="100" cy="83" r="9" fill="#f59e0b" stroke="#fde68a" strokeWidth="3" />
+            <circle cx="100" cy="83" r="3" fill="#7c2d12" opacity="0.7" />
           </>
         )}
         {scene === "designerWatch" && (
@@ -4213,9 +4486,9 @@ function PopupCard({
     <div className="mt-3 flex items-center justify-between gap-4 rounded-2xl border border-orange-500/35 bg-orange-500/10 px-4 py-3 shadow-lg shadow-orange-950/20">
       <div className="min-w-0">
         <p className="text-[10px] font-black uppercase tracking-[0.22em] text-orange-400">
-          Message
+          Action Result
         </p>
-        <p className="mt-1 text-sm leading-5 text-zinc-200">{message}</p>
+        <p className="mt-1 break-words text-sm leading-5 text-zinc-200">{message}</p>
       </div>
 
       <button
@@ -4240,12 +4513,12 @@ function LifeGrowthButton({
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-left transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.99]"
+      className="w-full min-w-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-left transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.99]"
     >
       <span className="block text-base font-black text-white">
         {action.name}
       </span>
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">
         {action.description}
       </span>
 
@@ -4288,6 +4561,18 @@ function getLifeGrowthChangeList(action: LifeGrowthAction) {
 
   if (action.reputationGain !== 0) {
     changes.push(`Reputation ${formatSigned(action.reputationGain)}`);
+  }
+
+  if (action.energyChange !== 0) {
+    changes.push(`Energy ${formatSigned(action.energyChange)}`);
+  }
+
+  if (action.stressChange !== 0) {
+    changes.push(`Stress ${formatSigned(action.stressChange)}`);
+  }
+
+  if (action.maxUsesPerYear !== undefined) {
+    changes.push(`${action.maxUsesPerYear}/year`);
   }
 
   if (action.cashCost > 0) {
@@ -4339,7 +4624,7 @@ function DegreeButton({
         {degree.name}
       </span>
 
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">
         {degree.description}
       </span>
 
@@ -4430,7 +4715,7 @@ function JobApplyButton({
     >
       <span className="block text-base font-black text-white">{job.title}</span>
 
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">
         {formatMoney(job.salary)}/year • Work pays{" "}
         {formatMoney(Math.floor(job.salary / ACTIONS_PER_YEAR))}/click
       </span>
@@ -4511,27 +4796,20 @@ function TopSummary({
   onRestart: () => void;
   onEndYear: () => void;
 }) {
-  const actionsUsed = getActionsUsed(life);
-  const actionsLeft = Math.max(0, ACTIONS_PER_YEAR - actionsUsed);
-  const actionsFull = actionsUsed >= ACTIONS_PER_YEAR;
+  const energyLow = (life.energy ?? MAX_ENERGY) < 15;
   const legacyScore = getLegacyScore(life);
 
   return (
-    <div className="sticky top-0 z-20 -mx-4 border-b border-zinc-900/80 bg-[#050505]/92 px-4 pb-3 pt-2 backdrop-blur-xl lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0">
-      <div className="overflow-hidden rounded-[1.25rem] border border-zinc-800/80 bg-gradient-to-br from-[#101217] via-[#090a0d] to-black p-3 shadow-2xl shadow-black/40">
-        <div className="flex items-center gap-3">
-          <div className="flex w-[230px] shrink-0 items-center gap-3">
-            <div className="shrink-0">
-              <div className="grid h-11 w-11 place-items-center rounded-full border border-orange-500/50 bg-orange-500/10 text-lg shadow-[0_0_25px_rgba(249,115,22,0.16)]">
-                ⚡
-              </div>
-              <div className="ml-1 mt-[-5px] inline-flex rounded-lg border border-orange-500/25 bg-orange-500/20 px-2 py-0.5 text-[8px] font-black uppercase text-orange-100">
-                Level 1
-              </div>
+    <div className="sticky top-0 z-20 -mx-4 border-b border-zinc-900/80 bg-[#050505]/92 px-4 pb-2 pt-2 backdrop-blur-xl lg:static lg:mx-0 lg:border-0 lg:bg-transparent lg:p-0">
+      <div className="overflow-hidden rounded-[1.15rem] border border-zinc-800/80 bg-gradient-to-br from-[#101217] via-[#090a0d] to-black p-3 shadow-2xl shadow-black/40">
+        <div className="flex items-center justify-between gap-3">
+          <div className="flex min-w-0 items-center gap-3">
+            <div className="grid h-10 w-10 shrink-0 place-items-center rounded-full border border-orange-500/50 bg-orange-500/10 text-lg shadow-[0_0_22px_rgba(249,115,22,0.14)]">
+              ⚡
             </div>
 
             <div className="min-w-0">
-              <p className="text-[9px] font-black uppercase tracking-[0.22em] text-orange-400">
+              <p className="text-[9px] font-black uppercase tracking-[0.2em] text-orange-400">
                 Welcome Back
               </p>
               <h1 className="truncate text-lg font-black leading-tight tracking-tight">
@@ -4543,49 +4821,70 @@ function TopSummary({
             </div>
           </div>
 
-          <div className="min-w-0 flex-1">
-            <div className="hidden items-center gap-3 lg:flex">
-              <p className="whitespace-nowrap text-[10px] font-bold text-zinc-500">0 / 100 XP</p>
-              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-900">
-                <div className="h-full w-[8%] rounded-full bg-orange-500" />
-              </div>
-            </div>
-
-            <div className="mt-2 grid grid-cols-3 gap-2">
-              <MiniStat icon="💵" label="Cash" value={formatMoney(life.cash)} helper={life.salary > 0 ? `${formatMoney(life.salary)}/year salary` : "No salary yet"} />
-              <MiniStat icon="📈" label="Net Worth" value={formatMoney(life.netWorth)} helper="Total wealth" />
-              <MiniStat icon="⚡" label="Actions Left" value={`${actionsLeft}/${ACTIONS_PER_YEAR}`} helper="Resets yearly" />
-            </div>
-          </div>
-
-          <div className="w-[104px] shrink-0 text-right">
-            <p className="text-[9px] font-black uppercase tracking-[0.14em] text-zinc-500">
-              Legacy
-            </p>
-            <p className="mt-0.5 text-lg font-black text-orange-400">
-              {legacyScore.toLocaleString()}
-            </p>
-            <p className="text-[10px] font-bold text-zinc-500">⭐ Rising</p>
-          </div>
-
           <button
             onClick={onEndYear}
-            className={`w-[120px] shrink-0 rounded-2xl px-4 py-3 text-left text-white shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] ${
-              actionsFull
-                ? "bg-orange-500 hover:bg-orange-400"
-                : "bg-orange-600 hover:bg-orange-500"
+            className={`shrink-0 rounded-2xl px-4 py-2.5 text-left text-white shadow-lg shadow-orange-500/20 transition hover:-translate-y-0.5 active:scale-[0.98] ${
+              energyLow
+                ? "bg-orange-600 hover:bg-orange-500"
+                : "bg-orange-500 hover:bg-orange-400"
             }`}
           >
-            <span className="flex items-center justify-between gap-2 text-sm font-black">
-              <span>Next Year</span>
+            <span className="flex items-center justify-between gap-3 text-sm font-black">
+              <span>Age Up</span>
               <span>→</span>
             </span>
-            <span className="mt-1 block text-[10px] font-bold leading-4 text-orange-100/90">
-              {actionsFull
-                ? "Ready"
-                : `${actionsLeft} left`}
+            <span className="mt-0.5 block text-[10px] font-bold leading-4 text-orange-100/90">
+              Year end
             </span>
           </button>
+        </div>
+
+        <div className="mt-3 hidden items-center gap-3 lg:flex">
+          <p className="whitespace-nowrap text-[10px] font-bold text-zinc-500">0 / 100 XP</p>
+          <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-zinc-900">
+            <div className="h-full w-[8%] rounded-full bg-orange-500" />
+          </div>
+        </div>
+
+        <div className="mt-3 grid grid-cols-3 gap-2">
+          <MiniStat icon="💵" label="Cash" value={formatMoney(life.cash)} helper={life.salary > 0 ? `${formatMoney(life.salary)}/year` : "No salary"} compact />
+          <MiniStat icon="📈" label="Net Worth" value={formatMoney(life.netWorth)} helper="Total" compact />
+          <MiniStat icon="🔋" label="Energy" value={`${life.energy ?? MAX_ENERGY}/100`} helper={getEnergyStatus(life)} compact />
+        </div>
+
+        <div className="mt-3 rounded-2xl border border-zinc-800 bg-black/25 p-2.5">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <p className="text-[10px] font-black uppercase tracking-[0.18em] text-zinc-500">
+              Energy Bar
+            </p>
+            <p className={`text-xs font-black ${
+              (life.energy ?? MAX_ENERGY) < 15 ? "text-red-300" : "text-orange-300"
+            }`}>
+              {life.energy ?? MAX_ENERGY}/100 • {getEnergyStatus(life)}
+            </p>
+          </div>
+          <div className="h-2.5 overflow-hidden rounded-full bg-zinc-900">
+            <div
+              className={`h-full rounded-full ${
+                (life.energy ?? MAX_ENERGY) < 15
+                  ? "bg-red-500"
+                  : (life.energy ?? MAX_ENERGY) < 45
+                    ? "bg-yellow-400"
+                    : "bg-green-400"
+              }`}
+              style={{ width: `${Math.max(0, Math.min(100, life.energy ?? MAX_ENERGY))}%` }}
+            />
+          </div>
+        </div>
+
+        <div className="mt-2 hidden items-center justify-end gap-2 lg:flex">
+          <p className="text-[9px] font-black uppercase tracking-[0.14em] text-zinc-500">
+            Legacy
+          </p>
+          <p className="text-sm font-black text-orange-400">
+            {legacyScore.toLocaleString()}
+          </p>
+          <p className="text-[10px] font-bold text-zinc-500">⭐ Rising</p>
         </div>
       </div>
     </div>
@@ -4609,13 +4908,12 @@ function NewLifeWizard({
   setSetupStep: (step: SetupStep) => void;
   onStartLife: () => void;
 }) {
-  const selectedBackground = findBackground(origin.background);
-  const selectedTrait = findTrait(origin.trait);
-  const selectedDifficulty = findDifficulty(origin.difficulty);
-
   const backgroundNames = familyBackgrounds.map((item) => item.name);
   const traitNames = childhoodTraits.map((item) => item.name);
   const difficultyNames = difficulties.map((item) => item.name);
+  const selectedBackground = findBackground(origin.background);
+  const selectedTrait = findTrait(origin.trait);
+  const selectedDifficulty = findDifficulty(origin.difficulty);
 
   function randomize() {
     setOrigin(
@@ -4626,101 +4924,116 @@ function NewLifeWizard({
   return (
     <main className="min-h-screen bg-[#090909] px-5 py-8 text-white">
       <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md flex-col justify-center">
-        <div className="rounded-3xl border border-orange-500/30 bg-zinc-950 p-6 shadow-2xl shadow-orange-950/40">
-          <div className="mb-8 text-center">
-            <p className="mb-2 text-sm font-semibold uppercase tracking-[0.35em] text-orange-400">
+        <div className="w-full rounded-[2rem] border border-orange-500/30 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.14),transparent_32%),linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-6 shadow-2xl shadow-orange-950/40">
+          <div className="mb-6 text-center">
+            <div className="mb-3 flex items-center justify-center gap-2">
+              <span className="rounded-full border border-orange-500/30 bg-orange-500/10 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-orange-300">
+                {GAME_STAGE_LABEL}
+              </span>
+              <span className="rounded-full border border-zinc-800 bg-zinc-900 px-3 py-1 text-[10px] font-black uppercase tracking-[0.18em] text-zinc-400">
+                {GAME_VERSION_LABEL}
+              </span>
+            </div>
+            <p className="mb-2 text-xs font-black uppercase tracking-[0.35em] text-orange-400">
               Charged Studios
             </p>
             <h1 className="text-5xl font-black tracking-tight">
               Charged<span className="text-orange-400">Life</span>
             </h1>
-            <p className="mt-4 text-lg font-medium text-zinc-300">
+            <p className="mt-3 text-base font-medium text-zinc-300">
               Start broke. Die legendary.
             </p>
           </div>
 
           <SetupProgress step={setupStep} />
 
-          {setupStep === "name" && (
-            <>
-              <h2 className="text-2xl font-black">What is your name?</h2>
-              <p className="mt-2 text-sm leading-6 text-zinc-400">
-                This is your character name for this life.
-              </p>
-
-              <input
-                value={nameInput}
-                onChange={(event) => setNameInput(event.target.value)}
-                placeholder="Enter your name"
-                className="mt-5 w-full rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-white outline-none transition focus:border-orange-400"
-              />
-
-              <button
-                onClick={() => setSetupStep("country")}
-                className="mt-5 w-full rounded-2xl bg-orange-500 px-5 py-4 text-lg font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+          <div className="flex min-h-[470px] flex-col">
+            {setupStep === "name" && (
+              <SetupStepShell
+                title="Create your life"
+                description="Choose your character name. Every choice after this changes your start."
+                footer={
+                  <button
+                    onClick={() => setSetupStep("country")}
+                    className="w-full rounded-2xl bg-orange-500 px-5 py-4 text-lg font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+                  >
+                    Continue
+                  </button>
+                }
               >
-                Continue
-              </button>
-            </>
-          )}
+                <input
+                  value={nameInput}
+                  onChange={(event) => setNameInput(event.target.value)}
+                  placeholder="Enter your name"
+                  className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-4 text-white outline-none transition focus:border-orange-400"
+                />
 
-          {setupStep === "country" && (
-            <SetupChoice
-              title="Choose your country"
-              description="For now, country is mainly flavor. Later it can affect wages, taxes, and opportunities."
-              value={origin.country}
-              options={countries}
-              onChange={(value) => setOrigin({ ...origin, country: value })}
-              onBack={() => setSetupStep("name")}
-              onNext={() => setSetupStep("background")}
-            />
-          )}
+                <div className="mt-4 rounded-2xl bg-zinc-950/70 p-4">
+                  <p className="text-sm font-black text-white">This life begins at age 18.</p>
+                  <p className="mt-1 text-sm leading-6 text-zinc-400">
+                    You will choose region, family background, childhood trait, and difficulty before starting.
+                  </p>
+                </div>
+              </SetupStepShell>
+            )}
 
-          {setupStep === "background" && (
-            <SetupChoice
-              title="Choose your family background"
-              description={selectedBackground.description}
-              value={origin.background}
-              options={backgroundNames}
-              onChange={(value) => setOrigin({ ...origin, background: value })}
-              onBack={() => setSetupStep("country")}
-              onNext={() => setSetupStep("trait")}
-            />
-          )}
+            {setupStep === "country" && (
+              <SetupChoice
+                title="Choose region"
+                description="Regions are simple for now. Later they can affect wages, taxes, opportunities, and life events."
+                value={origin.country}
+                options={countries}
+                onChange={(value) => setOrigin({ ...origin, country: value })}
+                onBack={() => setSetupStep("name")}
+                onNext={() => setSetupStep("background")}
+              />
+            )}
 
-          {setupStep === "trait" && (
-            <SetupChoice
-              title="Choose your childhood trait"
-              description={selectedTrait.description}
-              value={origin.trait}
-              options={traitNames}
-              onChange={(value) => setOrigin({ ...origin, trait: value })}
-              onBack={() => setSetupStep("background")}
-              onNext={() => setSetupStep("difficulty")}
-            />
-          )}
+            {setupStep === "background" && (
+              <SetupChoice
+                title="Choose family background"
+                description={`${selectedBackground.description} Starting cash: ${formatMoney(selectedBackground.startingCash)}. This affects stats, early stress, debt, skills, and your first years.`}
+                value={origin.background}
+                options={backgroundNames}
+                onChange={(value) => setOrigin({ ...origin, background: value })}
+                onBack={() => setSetupStep("country")}
+                onNext={() => setSetupStep("trait")}
+              />
+            )}
 
-          {setupStep === "difficulty" && (
-            <>
+            {setupStep === "trait" && (
+              <SetupChoice
+                title="Choose childhood trait"
+                description={`${selectedTrait.description} Keep it simple: this mainly shapes your starting stats and playstyle.`}
+                value={origin.trait}
+                options={traitNames}
+                onChange={(value) => setOrigin({ ...origin, trait: value })}
+                onBack={() => setSetupStep("background")}
+                onNext={() => setSetupStep("difficulty")}
+              />
+            )}
+
+            {setupStep === "difficulty" && (
               <SetupChoice
                 title="Choose difficulty"
-                description={selectedDifficulty.description}
+                description={`${selectedDifficulty.description} Difficulty affects starting cash, stats, stress, energy, and death/event pressure.`}
                 value={origin.difficulty}
                 options={difficultyNames}
                 onChange={(value) => setOrigin({ ...origin, difficulty: value })}
                 onBack={() => setSetupStep("trait")}
                 onNext={onStartLife}
                 nextLabel="Start Life"
+                extraFooter={
+                  <button
+                    onClick={randomize}
+                    className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 px-5 py-4 text-sm font-black text-white transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.98]"
+                  >
+                    Randomize Origin
+                  </button>
+                }
               />
-
-              <button
-                onClick={randomize}
-                className="mt-3 w-full rounded-2xl border border-zinc-800 bg-zinc-900 px-5 py-4 text-sm font-black text-white transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.98]"
-              >
-                Randomize Origin
-              </button>
-            </>
-          )}
+            )}
+          </div>
         </div>
       </section>
     </main>
@@ -4751,6 +5064,31 @@ function SetupProgress({ step }: { step: SetupStep }) {
   );
 }
 
+function SetupStepShell({
+  title,
+  description,
+  children,
+  footer,
+}: {
+  title: string;
+  description: string;
+  children: ReactNode;
+  footer: ReactNode;
+}) {
+  return (
+    <div className="flex min-h-[470px] flex-col">
+      <div>
+        <h2 className="text-2xl font-black">{title}</h2>
+        <p className="mt-2 min-h-[48px] text-sm leading-6 text-zinc-400">{description}</p>
+      </div>
+
+      <div className="mt-5 flex-1">{children}</div>
+
+      <div className="mt-5">{footer}</div>
+    </div>
+  );
+}
+
 function SetupChoice({
   title,
   description,
@@ -4760,6 +5098,7 @@ function SetupChoice({
   onBack,
   onNext,
   nextLabel = "Continue",
+  extraFooter,
 }: {
   title: string;
   description: string;
@@ -4769,13 +5108,35 @@ function SetupChoice({
   onBack: () => void;
   onNext: () => void;
   nextLabel?: string;
+  extraFooter?: ReactNode;
 }) {
   return (
-    <>
-      <h2 className="text-2xl font-black">{title}</h2>
-      <p className="mt-2 text-sm leading-6 text-zinc-400">{description}</p>
+    <SetupStepShell
+      title={title}
+      description={description}
+      footer={
+        <div className="space-y-3">
+          <div className="grid grid-cols-2 gap-3">
+            <button
+              onClick={onBack}
+              className="rounded-2xl border border-zinc-800 bg-zinc-900 px-5 py-4 text-sm font-black text-white transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.98]"
+            >
+              Back
+            </button>
 
-      <div className="mt-5 grid grid-cols-1 gap-3">
+            <button
+              onClick={onNext}
+              className="rounded-2xl bg-orange-500 px-5 py-4 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+            >
+              {nextLabel}
+            </button>
+          </div>
+
+          {extraFooter}
+        </div>
+      }
+    >
+      <div className="grid gap-3">
         {options.map((option) => {
           const selected = value === option;
 
@@ -4783,34 +5144,21 @@ function SetupChoice({
             <button
               key={option}
               onClick={() => onChange(option)}
-              className={`rounded-2xl border p-4 text-left font-black transition active:scale-[0.98] ${
+              className={`rounded-2xl p-4 text-left transition active:scale-[0.98] ${
                 selected
-                  ? "border-orange-400 bg-orange-500 text-black"
-                  : "border-zinc-800 bg-zinc-900 text-white hover:border-orange-400"
+                  ? "bg-orange-500 text-black shadow-lg shadow-orange-500/20"
+                  : "bg-zinc-900/80 text-white hover:bg-zinc-800"
               }`}
             >
-              {option}
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-black">{option}</span>
+                {selected && <span className="text-xs font-black">Selected</span>}
+              </div>
             </button>
           );
         })}
       </div>
-
-      <div className="mt-5 grid grid-cols-2 gap-3">
-        <button
-          onClick={onBack}
-          className="rounded-2xl border border-zinc-800 bg-zinc-900 px-5 py-4 text-sm font-black text-white transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.98]"
-        >
-          Back
-        </button>
-
-        <button
-          onClick={onNext}
-          className="rounded-2xl bg-orange-500 px-5 py-4 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
-        >
-          {nextLabel}
-        </button>
-      </div>
-    </>
+    </SetupStepShell>
   );
 }
 
@@ -4823,36 +5171,88 @@ function LifeCompleteScreen({
   legacyScore: number;
   onRestart: () => void;
 }) {
+  const yearsLived = Math.max(0, life.age - 18);
+  const legacyRank = getLegacyRank(legacyScore);
+  const assetsOwned = (life.ownedCars?.length || 0) + (life.ownedHomes?.length || 0) + (life.ownedItems?.length || 0);
+  const businessesOwned = life.businesses?.length || (life.business !== "None" ? 1 : 0);
+  const finalEvents = (life.eventLog || []).slice(0, 5);
+  const lifeSummary =
+    legacyScore >= 50000
+      ? "A legendary life that changed the world around you."
+      : legacyScore >= 20000
+        ? "A powerful life with real achievements and a lasting legacy."
+        : legacyScore >= 8000
+          ? "A solid life with progress, lessons, and momentum."
+          : "A humble life. The next one can be greater.";
+
   return (
-    <main className="min-h-screen bg-[#090909] px-5 py-8 text-white">
-      <section className="mx-auto w-full max-w-md">
-        <div className="rounded-3xl border border-orange-500/30 bg-zinc-950 p-6 shadow-2xl shadow-orange-950/40">
-          <p className="mb-2 text-sm font-semibold uppercase tracking-[0.35em] text-orange-400">
-            Life Complete
-          </p>
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(249,115,22,0.12),transparent_35%),#090909] px-5 py-8 text-white">
+      <section className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-3xl items-center justify-center">
+        <div className="w-full rounded-[2rem] border border-orange-500/30 bg-[linear-gradient(180deg,rgba(20,20,24,0.98),rgba(9,9,11,0.98))] p-6 shadow-2xl shadow-orange-950/40">
+          <div className="flex flex-wrap items-start justify-between gap-4">
+            <div>
+              <div className="mb-3 flex flex-wrap items-center gap-2">
+                <p className="text-sm font-black uppercase tracking-[0.35em] text-orange-400">
+                  Life Complete
+                </p>
+                <span className="rounded-full bg-orange-500/10 px-2.5 py-1 text-[10px] font-black uppercase tracking-[0.14em] text-orange-300">
+                  {GAME_STAGE_LABEL} • {GAME_VERSION_LABEL}
+                </span>
+              </div>
 
-          <h1 className="text-4xl font-black">
-            {life.name} died at age {life.age}
-          </h1>
+              <h1 className="max-w-xl text-4xl font-black leading-tight md:text-5xl">
+                {life.name} died at age {life.age}
+              </h1>
 
-          <p className="mt-4 leading-7 text-zinc-400">{life.deathReason}</p>
+              <p className="mt-4 max-w-2xl leading-7 text-zinc-400">{life.deathReason}</p>
+            </div>
 
-          <div className="mt-6 rounded-3xl bg-zinc-900 p-5">
-            <p className="text-sm font-semibold uppercase tracking-[0.25em] text-zinc-500">
+            <div className="rounded-3xl bg-orange-500/10 px-4 py-3 text-right">
+              <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-300">Years lived</p>
+              <p className="mt-1 text-3xl font-black text-white">{yearsLived}</p>
+            </div>
+          </div>
+
+          <div className="mt-6 rounded-3xl bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.18),transparent_35%),rgba(24,24,27,0.96)] p-5">
+            <p className="text-sm font-black uppercase tracking-[0.25em] text-zinc-500">
               Legacy Score
             </p>
-            <p className="mt-2 text-5xl font-black text-orange-400">
-              {legacyScore.toLocaleString()}
-            </p>
-            <p className="mt-2 text-xl font-bold">{getLegacyRank(legacyScore)}</p>
+            <div className="mt-2 flex flex-wrap items-end justify-between gap-3">
+              <div>
+                <p className="text-6xl font-black text-orange-400">
+                  {legacyScore.toLocaleString()}
+                </p>
+                <p className="mt-1 text-2xl font-black">{legacyRank}</p>
+              </div>
+              <p className="max-w-xs text-sm leading-6 text-zinc-400">{lifeSummary}</p>
+            </div>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-3">
+          <div className="mt-5 grid gap-3 md:grid-cols-4">
             <MainStat label="Final Cash" value={formatMoney(life.cash)} />
             <MainStat label="Net Worth" value={formatMoney(life.netWorth)} />
-            <MainStat label="Job" value={life.job} />
+            <MainStat label="Assets Owned" value={`${assetsOwned}`} />
+            <MainStat label="Businesses" value={`${businessesOwned}`} />
+            <MainStat label="Final Job" value={life.job} />
             <MainStat label="Business" value={life.business} />
+            <MainStat label="Family" value={`${life.children} children`} />
+            <MainStat label="Difficulty" value={life.difficulty} />
           </div>
+
+          {finalEvents.length > 0 && (
+            <div className="mt-5 rounded-3xl bg-zinc-950/70 p-5">
+              <p className="text-xs font-black uppercase tracking-[0.22em] text-orange-400">
+                Final Life Highlights
+              </p>
+              <div className="mt-3 space-y-2">
+                {finalEvents.map((event, index) => (
+                  <div key={`${event}-${index}`} className="rounded-2xl bg-black/25 px-4 py-3 text-sm text-zinc-300">
+                    {event}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
 
           <button
             onClick={onRestart}
@@ -4876,8 +5276,9 @@ function BottomNavigation({
   const tabs: { id: ActiveTab; label: string; icon: string }[] = [
     { id: "life", label: "Life", icon: "🏠" },
     { id: "stats", label: "Stats", icon: "📊" },
-    { id: "career", label: "Career", icon: "💼" },
+    { id: "career", label: "Career+", icon: "💼" },
     { id: "economy", label: "Money", icon: "💰" },
+    { id: "business", label: "Business Hub", icon: "🏢" },
     { id: "actions", label: "Actions", icon: "⚡" },
     { id: "timeline", label: "Story", icon: "📖" },
   ];
@@ -4908,6 +5309,813 @@ function BottomNavigation({
   );
 }
 
+function RealEstateCompanyPanel({
+  life,
+  updateLife,
+}: {
+  life: LifeStats;
+  updateLife: (life: LifeStats) => void;
+}) {
+  const activeBusiness = (life.businesses || []).find((business) => business.id === life.activeBusinessId);
+  const stats = activeBusiness?.specialStats || {};
+  const companyCash = stats.companyCash || 0;
+  const currentDeal = stats.currentDeal || 0;
+  const ownedProject = stats.ownedProject || 0;
+  const dealPrice = stats.dealPrice || 0;
+  const dealValue = stats.dealValue || 0;
+  const dealCondition = stats.dealCondition || 0;
+  const dealRisk = stats.dealRisk || 0;
+  const dealRent = stats.dealRent || 0;
+  const renovationProgress = stats.renovationProgress || 0;
+  const rentalUnits = stats.rentalUnits || 0;
+  const managerQuality = stats.managerQuality || 0;
+  const canBuyDeal = currentDeal > 0 && companyCash >= dealPrice;
+  const dealUpside = currentDeal ? dealValue - dealPrice : 0;
+
+  const currentStep = !companyCash
+    ? 1
+    : !currentDeal && !ownedProject
+      ? 2
+      : currentDeal && !ownedProject
+        ? 3
+        : 4;
+
+  const nextMove =
+    currentStep === 1
+      ? "Add money into the Deal Fund. Real Estate actions use company cash, not your personal cash."
+      : currentStep === 2
+        ? "Find a property deal. The deal can be undervalued, overpriced, safe, or risky."
+        : currentStep === 3
+          ? canBuyDeal
+            ? "Buy the deal or search again if it looks bad."
+            : "Add more money to the Deal Fund before buying this deal."
+          : "You own a project. Renovate it, rent it out for yearly income, or flip it for a risky one-time sale.";
+
+  return (
+    <div className="rounded-[1.6rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_34%),rgba(0,0,0,0.22)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            Real Estate Deal Room
+          </p>
+          <h4 className="mt-1 text-xl font-black text-white">
+            Buy low, improve, then rent or flip
+          </h4>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+            Real Estate has its own loop. First fund the company, then find a deal, buy it, and choose whether to build rental cashflow or take a risky flip profit.
+          </p>
+        </div>
+
+        <span className="rounded-full bg-orange-500/10 px-3 py-1.5 text-xs font-black text-orange-300">
+          Step {currentStep}/4
+        </span>
+      </div>
+
+      <div className="mt-4 rounded-2xl bg-orange-500/10 p-4">
+        <p className="text-sm font-black text-orange-100">Recommended next move</p>
+        <p className="mt-1 text-sm leading-6 text-zinc-300">{nextMove}</p>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-4">
+        {[
+          ["1", "Fund", "Move cash into the company deal fund."],
+          ["2", "Find Deal", "Roll a property deal with price, value, condition, and risk."],
+          ["3", "Buy", "Use the deal fund to buy the current deal."],
+          ["4", "Rent or Flip", "Rent for passive income or flip for risky profit."],
+        ].map(([number, title, text], index) => {
+          const stepNumber = index + 1;
+          const active = stepNumber === currentStep;
+          const done = stepNumber < currentStep;
+
+          return (
+            <div
+              key={title}
+              className={`rounded-2xl p-3 ${
+                active
+                  ? "bg-orange-500/15"
+                  : done
+                    ? "bg-green-500/10"
+                    : "bg-zinc-950/70"
+              }`}
+            >
+              <div className="flex items-center gap-2">
+                <span className={`grid h-7 w-7 place-items-center rounded-full text-xs font-black ${
+                  active
+                    ? "bg-orange-500 text-black"
+                    : done
+                      ? "bg-green-500 text-black"
+                      : "bg-zinc-800 text-zinc-400"
+                }`}>
+                  {number}
+                </span>
+                <p className="font-black text-white">{title}</p>
+              </div>
+              <p className="mt-2 text-xs leading-5 text-zinc-500">{text}</p>
+            </div>
+          );
+        })}
+      </div>
+
+      <div className="mt-4 grid grid-cols-2 gap-2 md:grid-cols-4">
+        <BusinessMetricCard label="Deal Fund" value={formatMoney(companyCash)} helper="Company cash" />
+        <BusinessMetricCard
+          label="Current Deal"
+          value={currentDeal ? formatMoney(dealPrice) : "None"}
+          helper={currentDeal ? `${dealUpside >= 0 ? "Upside" : "Overpay"} ${formatMoney(Math.abs(dealUpside))}` : "Find one"}
+        />
+        <BusinessMetricCard label="Est. Value" value={currentDeal || ownedProject ? formatMoney(dealValue) : "$0"} helper="Market estimate" />
+        <BusinessMetricCard label="Condition" value={`${dealCondition}/100`} helper="Higher is better" />
+        <BusinessMetricCard label="Risk" value={`${dealRisk}/100`} helper="Hidden problems" />
+        <BusinessMetricCard label="Rent Potential" value={formatMoney(dealRent)} helper="Yearly estimate" />
+        <BusinessMetricCard label="Renovation" value={`${renovationProgress}/100`} helper="Flip/rent boost" />
+        <BusinessMetricCard label="Manager" value={`${managerQuality}/100`} helper="Risk control" />
+      </div>
+
+      <div className="mt-4 grid gap-3 xl:grid-cols-[0.9fr_1.1fr]">
+        <div className="rounded-2xl bg-zinc-950/70 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-300">
+            Deal Fund
+          </p>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            This is money inside the Real Estate company. Buying, renovating, and hiring managers use this fund.
+          </p>
+          <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4">
+            {[5000, 10000, 25000, 50000].map((amount) => (
+              <button
+                key={amount}
+                onClick={() => updateLife(realEstateAddFunds(life, amount))}
+                className="rounded-xl bg-orange-500/10 px-2 py-2 text-xs font-black text-orange-200 transition hover:bg-orange-500 hover:text-black"
+              >
+                Add {formatMoney(amount)}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl bg-zinc-950/70 p-4">
+          <p className="text-xs font-black uppercase tracking-[0.18em] text-orange-300">
+            Strategy Explained
+          </p>
+          <div className="mt-3 grid gap-2 md:grid-cols-2">
+            <div className="rounded-xl bg-black/25 p-3">
+              <p className="font-black text-white">Rent it out</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-400">
+                Slower, safer. Adds yearly business revenue if you find tenants.
+              </p>
+            </div>
+            <div className="rounded-xl bg-black/25 p-3">
+              <p className="font-black text-white">Fix & flip</p>
+              <p className="mt-1 text-xs leading-5 text-zinc-400">
+                Faster, riskier. One sale roll can make profit or cause a loss.
+              </p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {currentDeal > 0 && !ownedProject && (
+        <div className={`mt-4 rounded-2xl p-4 ${canBuyDeal ? "bg-green-500/10" : "bg-red-500/10"}`}>
+          <p className="text-sm font-black text-white">Current Deal Summary</p>
+          <p className="mt-1 text-sm leading-6 text-zinc-300">
+            Price {formatMoney(dealPrice)} • Estimated value {formatMoney(dealValue)} • Condition {dealCondition}/100 • Risk {dealRisk}/100.
+            {canBuyDeal
+              ? " You have enough Deal Fund to buy it."
+              : ` You need ${formatMoney(Math.max(0, dealPrice - companyCash))} more in the Deal Fund to buy it.`}
+          </p>
+        </div>
+      )}
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-3">
+        <BusinessActionCard
+          icon="🔎"
+          title="Find Property Deal"
+          description="Costs $750 personal cash. Finds a deal with price, value, condition, rent potential, and risk."
+          onClick={() => updateLife(realEstateFindDeal(life))}
+        />
+
+        <BusinessActionCard
+          icon="🏚️"
+          title="Buy Current Deal"
+          description="Requires a found deal and enough Deal Fund. After buying, you can renovate, rent, or flip."
+          onClick={() => updateLife(realEstateBuyDeal(life))}
+        />
+
+        <BusinessActionCard
+          icon="🔨"
+          title="Renovate Project"
+          description="Costs Deal Fund. Improves value/condition, but hidden damage can cause losses."
+          onClick={() => updateLife(realEstateRenovate(life))}
+        />
+
+        <BusinessActionCard
+          icon="🏘️"
+          title="Rent It Out"
+          description="Attempts to find tenants. Success adds yearly business revenue."
+          onClick={() => updateLife(realEstateRentProject(life))}
+        />
+
+        <BusinessActionCard
+          icon="💸"
+          title="Fix & Flip"
+          description="Sells the project. High risk/high reward based on condition, renovation, luck, and deal risk."
+          onClick={() => updateLife(realEstateFlipProject(life))}
+        />
+
+        <BusinessActionCard
+          icon="🧑‍💼"
+          title="Hire Manager"
+          description="Costs $5k from Deal Fund. Improves manager quality, management, and lowers risk."
+          onClick={() => updateLife(realEstateHireManager(life))}
+        />
+      </div>
+    </div>
+  );
+}
+
+function BusinessFinanceTools({
+  life,
+  updateLife,
+}: {
+  life: LifeStats;
+  updateLife: (life: LifeStats) => void;
+}) {
+  return (
+    <details className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+      <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-zinc-400">
+        Finance tools: loans, debt, and investing
+      </summary>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        <div className="rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3">
+          <p className="text-sm font-black text-white">Take Loan</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">
+            Borrow money based on your income profile. Limit: {formatMoney(getLoanLimit(life))}
+          </p>
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            {[25, 50, 100, 200].map((percent) => (
+              <button
+                key={percent}
+                onClick={() => updateLife(takeLoan(life, percent))}
+                className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
+              >
+                {percent}%
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-red-500/20 bg-red-500/10 p-3">
+          <p className="text-sm font-black text-white">Pay Debt</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-400">
+            Current debt: {formatMoney(life.debt)}. Paying debt reduces interest.
+          </p>
+          <div className="mt-3 grid grid-cols-4 gap-2">
+            {[10, 25, 50, 100].map((percent) => (
+              <button
+                key={percent}
+                onClick={() => updateLife(payDebt(life, percent))}
+                className="rounded-xl bg-zinc-950 px-2 py-2 text-xs font-black text-zinc-100 transition hover:bg-orange-500 hover:text-black"
+              >
+                {percent}%
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <BusinessActionCard
+          icon="📈"
+          title="Invest"
+          description="Uses finance, intelligence, and luck. Can grow cash, but is not guaranteed."
+          onClick={() => updateLife(invest(life))}
+        />
+      </div>
+    </details>
+  );
+}
+
+function BusinessMarketPanel({
+  life,
+  updateLife,
+}: {
+  life: LifeStats;
+  updateLife: (life: LifeStats) => void;
+}) {
+  return (
+    <details className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+      <summary className="cursor-pointer text-sm font-black uppercase tracking-[0.18em] text-zinc-400">
+        Business market: start another business
+      </summary>
+
+      <p className="mt-3 text-sm leading-6 text-zinc-400">
+        Start a new company when you have enough cash. The new business becomes your active business.
+      </p>
+
+      <div className="mt-4 grid gap-3 md:grid-cols-2 xl:grid-cols-4">
+        {businessTypes.map((type) => (
+          <BusinessTypeCard
+            key={type.id}
+            type={type}
+            canAfford={life.cash >= type.startCost}
+            onClick={() => updateLife(startBusiness(life, type.id))}
+          />
+        ))}
+      </div>
+    </details>
+  );
+}
+
+function BusinessRecommendedNextMove({ life }: { life: LifeStats }) {
+  const project = getProductProject(life);
+  const risk = life.businessRisk || 0;
+  let title = "Recommended Next Move";
+  let message = "Improve the weakest part of the business before aging up.";
+  let tag = "Balanced";
+
+  if (isProductBusinessType(life.businessTypeId) && project) {
+    if (project.phase !== "released" && project.progress < 75) {
+      title = "Build before release";
+      message = "Your project is not ready yet. Focus on production, polish, and hype before releasing.";
+      tag = "Build";
+    } else if (project.phase !== "released" && project.bugs > 35) {
+      title = "Fix bugs before release";
+      message = "Progress is strong, but bugs are dangerous. Polish first to improve launch odds.";
+      tag = "Polish";
+    } else if (project.phase !== "released" && project.hype < 25) {
+      title = "Build hype";
+      message = "The product is close to release, but hype is low. Marketing can improve the launch roll.";
+      tag = "Hype";
+    } else if (project.phase !== "released") {
+      title = "Ready to release";
+      message = "Progress is high enough. Release when you feel the quality, hype, and bug level are acceptable.";
+      tag = "Release";
+    } else if (project.yearlyDecay >= 25 || life.age - project.lastUpdatedAge >= 2) {
+      title = "Update needed";
+      message = "This released product is starting to decay. Ship an update or revenue and users may fall.";
+      tag = "Live Ops";
+    } else {
+      title = "Keep momentum";
+      message = "The product is live. Updates, bug fixes, and marketing help keep revenue alive.";
+      tag = "Maintain";
+    }
+  } else if (risk >= 70) {
+    title = "Risk is too high";
+    message = "Focus on management, training, or cutting risk before pushing aggressive growth.";
+    tag = "Risk";
+  } else if ((life.businessManagement || 0) < 35) {
+    title = "Improve management";
+    message = "Low management makes payroll, scaling, and risk harder to control.";
+    tag = "Control";
+  } else if ((life.businessBrand || 0) < 35) {
+    title = "Build brand";
+    message = "Brand is low. Marketing and business-specific actions can unlock better growth.";
+    tag = "Brand";
+  }
+
+  return (
+    <div className="rounded-[1.6rem] border border-orange-500/25 bg-orange-500/10 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            What should you do now?
+          </p>
+          <h4 className="mt-1 text-xl font-black text-white">{title}</h4>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-300">{message}</p>
+        </div>
+        <span className="rounded-full border border-orange-500/25 bg-black/25 px-3 py-1 text-xs font-black text-orange-300">
+          {tag}
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function BusinessLifecycleTimeline({ life }: { life: LifeStats }) {
+  const project = getProductProject(life);
+  if (!project) return null;
+
+  const phases = [
+    {
+      id: "concept",
+      label: "Concept",
+      description: "Idea, market fit, and direction.",
+    },
+    {
+      id: "pre_production",
+      label: "Pre-Production",
+      description: "Planning, prototype, and early structure.",
+    },
+    {
+      id: "production",
+      label: "Production",
+      description: "Main build work and content creation.",
+    },
+    {
+      id: "post_production",
+      label: "Polish",
+      description: "Bug fixing, testing, optimization.",
+    },
+    {
+      id: "released",
+      label: "Live",
+      description: "Released product. Needs updates.",
+    },
+  ];
+
+  const currentIndex = phases.findIndex((phase) => phase.id === project.phase);
+  const releaseReady = project.phase !== "released" && project.progress >= 75;
+  const releaseWarning =
+    project.phase !== "released"
+      ? project.progress < 75
+        ? `Need ${75 - project.progress}% more progress before release.`
+        : project.bugs > 35
+          ? "Release is possible, but bug risk is high."
+          : project.hype < 25
+            ? "Release is possible, but hype is low."
+            : "Release is possible. Outcome still depends on quality, hype, bugs, risk, skill, and luck."
+      : project.yearlyDecay >= 25
+        ? "Live product is decaying. Update soon to protect revenue."
+        : "Live product is stable. Updates keep it earning longer.";
+
+  return (
+    <div className="rounded-[1.6rem] border border-zinc-800 bg-zinc-950/80 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            Lifecycle Overview
+          </p>
+          <h4 className="mt-1 text-xl font-black text-white">
+            {getProductProjectPhaseName(project.phase)}
+          </h4>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+            This is not one-click success. Build progress unlocks release, then quality, hype, bugs, risk, skill, and luck decide the launch result.
+          </p>
+        </div>
+        <span className={`rounded-full px-3 py-1.5 text-xs font-black ${
+          releaseReady || project.phase === "released"
+            ? "bg-green-500/15 text-green-300"
+            : "bg-orange-500/15 text-orange-300"
+        }`}>
+          {project.phase === "released" ? "Live" : releaseReady ? "Release Unlocked" : "Build Required"}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-5">
+        {phases.map((phase, index) => (
+          <div
+            key={phase.id}
+            className={`rounded-2xl border p-3 ${
+              index < currentIndex
+                ? "border-green-500/25 bg-green-500/10"
+                : index === currentIndex
+                  ? "border-orange-500/40 bg-orange-500/10"
+                  : "border-zinc-800 bg-black/25"
+            }`}
+          >
+            <p className="text-sm font-black text-white">{phase.label}</p>
+            <p className="mt-1 min-h-[40px] text-xs leading-5 text-zinc-500">{phase.description}</p>
+            <p className={`mt-2 text-[10px] font-black uppercase tracking-[0.14em] ${
+              index < currentIndex
+                ? "text-green-300"
+                : index === currentIndex
+                  ? "text-orange-300"
+                  : "text-zinc-600"
+            }`}>
+              {index < currentIndex ? "Completed" : index === currentIndex ? "Current" : "Locked"}
+            </p>
+          </div>
+        ))}
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-4">
+        <BusinessMetricCard label="Progress" value={`${project.progress}/100`} helper="75 needed to release" />
+        <BusinessMetricCard label="Quality" value={`${project.quality}/100`} helper="Higher launch score" />
+        <BusinessMetricCard label="Bugs" value={`${project.bugs}/100`} helper="Lower is safer" />
+        <BusinessMetricCard label="Hype" value={`${project.hype}/100`} helper="Launch attention" />
+      </div>
+
+      <div className="mt-4 rounded-2xl border border-orange-500/20 bg-orange-500/10 p-3">
+        <p className="text-sm font-black text-orange-100">Release Readiness</p>
+        <p className="mt-1 text-sm leading-6 text-zinc-300">{releaseWarning}</p>
+      </div>
+    </div>
+  );
+}
+
+function getProductActionHint(actionId: string, life: LifeStats) {
+  const project = getProductProject(life);
+
+  if (actionId === "project-plan") return "Cost ~$1k • Low energy • Improves planning, quality, and risk.";
+  if (actionId === "project-build") return "Cost ~$2.5k • Medium energy • Adds progress/quality but can add bugs.";
+  if (actionId === "project-polish") return "Cost ~$1.8k • Medium energy • Reduces bugs and improves launch safety.";
+  if (actionId === "project-hype") return "Cost ~$2.2k • Low energy • Builds hype for the release roll.";
+  if (actionId === "project-release") {
+    if (!project) return "Release the product.";
+    if (project.progress < 75) return `Locked • Need ${75 - project.progress}% more progress.`;
+    return "Cost ~$6k • High energy • Rolls launch outcome using quality, hype, bugs, risk, skill, and luck.";
+  }
+  if (actionId === "project-update") return "Cost ~$3.5k • Medium energy • Restores users/hype and slows revenue decay.";
+  return "";
+}
+
+function getBusinessActionHint(actionKey: string) {
+  if (actionKey === "hire") return "Adds staff and payroll. Good for scaling, bad if cashflow is weak.";
+  if (actionKey === "train") return "Improves management and risk control.";
+  if (actionKey === "cut-costs") return "Reduces pressure, but too much cost cutting can limit growth.";
+  if (actionKey === "investor") return "Raises cash, but gives away ownership.";
+  return "";
+}
+
+function runBusinessFallbackAction(life: LifeStats, actionKey: string) {
+  if ((life.energy ?? MAX_ENERGY) < 5) {
+    return {
+      ...life,
+      popupMessage: "You are too low on energy. Recover energy or age up before doing more business work.",
+    };
+  }
+
+  if (actionKey === "business-review") {
+    return {
+      ...life,
+      energy: Math.max(0, (life.energy ?? MAX_ENERGY) - 6),
+      businessRisk: Math.max(0, life.businessRisk - 1),
+      businessManagement: Math.min(100, (life.businessManagement || 0) + 1),
+      popupMessage: "You reviewed the company. Management +1, risk -1, energy -6.",
+      yearNotes: [`Business review: management +1, risk -1.`, ...(life.yearNotes || [])].slice(0, 6),
+    };
+  }
+
+  return {
+    ...life,
+    energy: Math.max(0, (life.energy ?? MAX_ENERGY) - 6),
+    businessBrand: Math.min(100, (life.businessBrand || 0) + 1),
+    popupMessage: "You made small business progress. Brand +1, energy -6.",
+    yearNotes: [`Small business progress: brand +1.`, ...(life.yearNotes || [])].slice(0, 6),
+  };
+}
+
+function BusinessActionCenter({
+  life,
+  updateLife,
+}: {
+  life: LifeStats;
+  updateLife: (life: LifeStats) => void;
+}) {
+  const productActions = isProductBusinessType(life.businessTypeId)
+    ? getProductLifecycleActions(life).map((action) => ({
+        key: action.id,
+        icon: action.icon,
+        title: action.title,
+        description: `${action.description} ${getProductActionHint(action.id, life)}`,
+        onClick: () => updateLife(doProductLifecycleAction(life, action.id)),
+      }))
+    : [];
+
+  const specificActions = life.businessTypeId === "real-estate-company"
+    ? []
+    : getBusinessSpecificActions(life.businessTypeId).map((action) => ({
+        key: action.id,
+        icon: action.icon,
+        title: action.title,
+        description: action.description,
+        onClick: () => updateLife(doBusinessSpecificAction(life, action.id)),
+      }));
+
+  const operationActions = [
+    {
+      key: "review",
+      icon: "📋",
+      title: "Review Company",
+      description: "Always available. Small progress if you have energy. Management +1, risk -1.",
+      onClick: () => updateLife(runBusinessFallbackAction(life, "business-review")),
+    },
+    {
+      key: "hire",
+      icon: "👥",
+      title: "Hire Employee",
+      description: `Scale faster, but payroll rises. ${getBusinessActionHint("hire")}`,
+      onClick: () => updateLife(hireEmployee(life)),
+    },
+    {
+      key: "train",
+      icon: "🎓",
+      title: "Train Employees",
+      description: `Improve management and reduce long-term risk. ${getBusinessActionHint("train")}`,
+      onClick: () => updateLife(trainEmployees(life)),
+    },
+    {
+      key: "cut-costs",
+      icon: "✂️",
+      title: "Cut Costs",
+      description: `Reduce risk and improve control. ${getBusinessActionHint("cut-costs")}`,
+      onClick: () => updateLife(cutCosts(life)),
+    },
+    {
+      key: "investor",
+      icon: "💼",
+      title: "Seek Investor",
+      description: `Raise cash but sell ownership. ${getBusinessActionHint("investor")}`,
+      onClick: () => updateLife(seekInvestor(life)),
+    },
+  ];
+
+  const actions = [...(productActions.length > 0 ? productActions : specificActions), ...operationActions].slice(0, 9);
+
+  return (
+    <div className="rounded-[1.6rem] border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.12),transparent_34%),rgba(0,0,0,0.22)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            Business Action Center
+          </p>
+          <h4 className="mt-1 text-xl font-black text-white">Key actions right now</h4>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+            One focused action area. Actions are not guaranteed success; they prepare the business, affect risk, and influence future rolls.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {actions.map((action) => (
+          <BusinessActionCard
+            key={action.key}
+            icon={action.icon}
+            title={action.title}
+            description={action.description}
+            onClick={action.onClick}
+          />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BusinessProductLifecyclePanel({
+  life,
+  updateLife,
+  compact = false,
+}: {
+  life: LifeStats;
+  updateLife: (life: LifeStats) => void;
+  compact?: boolean;
+}) {
+  const project = getProductProject(life);
+  const actions = getProductLifecycleActions(life);
+
+  if (!project) return null;
+
+  const releaseReady = project.phase !== "released" && project.progress >= 75;
+  const phaseName = getProductProjectPhaseName(project.phase);
+
+  return (
+    <div className="mt-4 rounded-2xl border border-orange-500/25 bg-[radial-gradient(circle_at_top_right,rgba(249,115,22,0.14),transparent_34%),rgba(0,0,0,0.22)] p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            Product Lifecycle
+          </p>
+          <h4 className="mt-1 text-xl font-black text-white">
+            {phaseName}
+          </h4>
+          <p className="mt-1 max-w-3xl text-sm leading-6 text-zinc-400">
+            Product businesses must build, polish, release, and update projects. Money comes after release, but ignored projects decay over time.
+          </p>
+        </div>
+
+        <span className={`rounded-full px-3 py-1.5 text-xs font-black ${
+          project.phase === "released"
+            ? "bg-green-500/15 text-green-300"
+            : releaseReady
+              ? "bg-orange-500/15 text-orange-300"
+              : "bg-zinc-900 text-zinc-400"
+        }`}>
+          {project.phase === "released" ? "Live" : releaseReady ? "Ready to Release" : "Building"}
+        </span>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-3 xl:grid-cols-6">
+        <BusinessMetricCard label="Progress" value={`${project.progress}/100`} helper={project.phase === "released" ? "Released" : "Build work"} />
+        <BusinessMetricCard label="Quality" value={`${project.quality}/100`} helper="Review chance" />
+        <BusinessMetricCard label="Bugs" value={`${project.bugs}/100`} helper="Lower is better" />
+        <BusinessMetricCard label="Hype" value={`${project.hype}/100`} helper="Launch power" />
+        <BusinessMetricCard label="Users" value={`${project.activeUsers}/100`} helper="Live traction" />
+        <BusinessMetricCard label="Decay" value={`${project.yearlyDecay}%`} helper="Update need" />
+      </div>
+
+      {!compact && (
+        <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+          {actions.map((action) => (
+            <BusinessActionCard
+              key={action.id}
+              icon={action.icon}
+              title={action.title}
+              description={action.description}
+              onClick={() => updateLife(doProductLifecycleAction(life, action.id))}
+            />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function BusinessSpecialStatsPanel({ life }: { life: LifeStats }) {
+  const activeBusiness = (life.businesses || []).find((business) => business.id === life.activeBusinessId);
+  const stats = getBusinessSpecialStats(life.businessTypeId);
+  const values = activeBusiness?.specialStats || {};
+
+  return (
+    <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            Business-Specific Stats
+          </p>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            These stats change depending on the business type you are managing.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {stats.map((stat) => (
+          <div key={stat.key} className="rounded-2xl border border-zinc-800 bg-zinc-950/70 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-black text-white">{stat.label}</p>
+                <p className="mt-1 text-xs leading-5 text-zinc-500">{stat.description}</p>
+              </div>
+              <span className="rounded-full bg-orange-500/10 px-2.5 py-1 text-xs font-black text-orange-300">
+                {values[stat.key] ?? 0}
+              </span>
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BusinessMilestonesPanel({ life }: { life: LifeStats }) {
+  const activeBusiness = (life.businesses || []).find((business) => business.id === life.activeBusinessId);
+  const milestones = activeBusiness
+    ? getBusinessMilestoneProgress(activeBusiness)
+    : getBusinessMilestones(life.businessTypeId).map((milestone) => ({
+        ...milestone,
+        value: 0,
+        progress: 0,
+        completed: false,
+      }));
+
+  return (
+    <div className="mt-4 rounded-2xl border border-zinc-800 bg-black/20 p-4">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.2em] text-orange-300">
+            Business Milestones
+          </p>
+          <p className="mt-1 text-sm leading-6 text-zinc-400">
+            Complete these to build reputation and long-term business progression.
+          </p>
+        </div>
+      </div>
+
+      <div className="mt-4 grid gap-2 md:grid-cols-2 xl:grid-cols-4">
+        {milestones.map((milestone) => (
+          <div
+            key={milestone.id}
+            className={`rounded-2xl border p-3 ${
+              milestone.completed
+                ? "border-green-500/25 bg-green-500/10"
+                : "border-zinc-800 bg-zinc-950/70"
+            }`}
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-black text-white">{milestone.label}</p>
+                <p className="mt-1 text-xs text-zinc-500">
+                  {milestone.value.toLocaleString()} / {milestone.target.toLocaleString()}
+                </p>
+              </div>
+              {milestone.completed && (
+                <span className="rounded-full bg-green-500/15 px-2 py-1 text-xs font-black text-green-300">
+                  Done
+                </span>
+              )}
+            </div>
+
+            <div className="mt-3 h-2 overflow-hidden rounded-full bg-zinc-900">
+              <div
+                className={`h-full rounded-full ${milestone.completed ? "bg-green-400" : "bg-orange-500"}`}
+                style={{ width: `${milestone.progress}%` }}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function BusinessPortfolioCard({
   business,
   active,
@@ -4920,29 +6128,39 @@ function BusinessPortfolioCard({
   return (
     <button
       onClick={onClick}
-      className={`rounded-2xl border p-3 text-left transition hover:border-orange-400/60 ${
+      className={`min-w-0 overflow-hidden rounded-2xl border p-4 text-left transition hover:border-orange-400/60 ${
         active
           ? "border-orange-500/50 bg-orange-500/10"
           : "border-zinc-800 bg-black/25"
       }`}
     >
       <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="font-black text-white">{business.name}</p>
-          <p className="mt-1 text-xs text-zinc-500">
+        <div className="min-w-0">
+          <p className="truncate text-lg font-black text-white">{business.name}</p>
+          <p className="mt-1 text-xs leading-5 text-zinc-500">
             {getBusinessStageName(business.stage)} • Risk {business.risk}/100
           </p>
         </div>
         {active && (
-          <span className="rounded-full bg-orange-500 px-2 py-1 text-[10px] font-black text-black">
+          <span className="shrink-0 rounded-full bg-orange-500 px-2.5 py-1 text-[10px] font-black text-black">
             Active
           </span>
         )}
       </div>
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <MiniAssetStat label="Value" value={formatMoney(business.value)} />
-        <MiniAssetStat label="Rev" value={formatMoney(business.revenue)} />
-        <MiniAssetStat label="Staff" value={`${business.employees}`} />
+
+      <div className="mt-4 space-y-2">
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-black/25 px-3 py-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Value</span>
+          <span className="truncate text-sm font-black text-white">{formatMoney(business.value)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-black/25 px-3 py-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Revenue</span>
+          <span className="truncate text-sm font-black text-white">{formatMoney(business.revenue)}</span>
+        </div>
+        <div className="flex items-center justify-between gap-3 rounded-xl border border-zinc-800 bg-black/25 px-3 py-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">Staff</span>
+          <span className="text-sm font-black text-white">{business.employees}</span>
+        </div>
       </div>
     </button>
   );
@@ -4981,10 +6199,19 @@ function BusinessTypeCard({
       </p>
       <p className="mt-2 min-h-[54px] text-sm leading-5 text-zinc-400">{type.description}</p>
 
-      <div className="mt-3 grid grid-cols-3 gap-2">
-        <MiniAssetStat label="Risk" value={`${type.risk}/100`} />
-        <MiniAssetStat label="Diff" value={`${type.difficulty}/10`} />
-        <MiniAssetStat label="Upside" value={`${Math.round(type.revenuePotential * 100)}%`} />
+      <div className="mt-3 space-y-2">
+        <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 px-3 py-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Risk</span>
+          <span className="text-sm font-black text-white">{type.risk}/100</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 px-3 py-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Difficulty</span>
+          <span className="text-sm font-black text-white">{type.difficulty}/10</span>
+        </div>
+        <div className="flex items-center justify-between rounded-xl bg-zinc-950/70 px-3 py-2">
+          <span className="text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">Upside</span>
+          <span className="text-sm font-black text-white">{Math.round(type.revenuePotential * 100)}%</span>
+        </div>
       </div>
 
       <span className={`mt-3 block rounded-xl px-3 py-2 text-center text-xs font-black ${
@@ -5006,10 +6233,10 @@ function BusinessMetricCard({
   helper: string;
 }) {
   return (
-    <div className="rounded-2xl border border-zinc-800 bg-black/25 p-3">
-      <p className="text-[10px] font-black uppercase tracking-[0.16em] text-zinc-500">{label}</p>
-      <p className="mt-1 text-base font-black text-white">{value}</p>
-      <p className="mt-1 text-xs text-zinc-500">{helper}</p>
+    <div className="min-w-0 overflow-hidden rounded-2xl bg-black/25 p-3">
+      <p className="truncate text-[10px] font-black uppercase tracking-[0.14em] text-zinc-500">{label}</p>
+      <p className="mt-1 break-words text-base font-black leading-5 text-white">{value}</p>
+      <p className="mt-1 break-words text-xs leading-4 text-zinc-500">{helper}</p>
     </div>
   );
 }
@@ -5028,13 +6255,13 @@ function BusinessActionCard({
   return (
     <button
       onClick={onClick}
-      className="group rounded-2xl border border-zinc-800 bg-black/25 p-3 text-left transition hover:-translate-y-0.5 hover:border-orange-400/60 hover:bg-zinc-900 active:scale-[0.99]"
+      className="group min-w-0 overflow-hidden rounded-2xl bg-black/25 p-3 text-left transition hover:-translate-y-0.5 hover:bg-zinc-900 active:scale-[0.99]"
     >
-      <div className="flex items-start gap-3">
+      <div className="flex min-w-0 items-start gap-3">
         <span className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-orange-500/10 text-lg">{icon}</span>
-        <span>
-          <span className="block text-sm font-black text-white">{title}</span>
-          <span className="mt-1 block text-xs leading-5 text-zinc-400">{description}</span>
+        <span className="min-w-0">
+          <span className="block break-words text-sm font-black leading-5 text-white">{title}</span>
+          <span className="mt-1 block break-words text-xs leading-5 text-zinc-400">{description}</span>
         </span>
       </div>
     </button>
@@ -5074,7 +6301,7 @@ function CareerActionCard({
         </span>
         <span className="min-w-0">
           <span className="block text-lg font-black text-white">{title}</span>
-          <span className="mt-1 block text-sm leading-5 text-zinc-400">{description}</span>
+          <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">{description}</span>
         </span>
       </div>
     </button>
@@ -5106,7 +6333,7 @@ function DirectoryCard({
           </span>
           <span className="min-w-0">
             <span className="block text-lg font-black text-white">{title}</span>
-            <span className="mt-1 block text-sm leading-5 text-zinc-400">{description}</span>
+            <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">{description}</span>
             {detail && (
               <span className="mt-3 inline-flex rounded-xl border border-orange-500/20 bg-orange-500/10 px-3 py-1.5 text-xs font-black text-orange-300">
                 {detail}
@@ -5222,17 +6449,17 @@ function ActionCategory({
   return (
     <button
       onClick={onClick}
-      className="group flex w-full items-center gap-4 rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 text-left transition hover:-translate-y-0.5 hover:border-orange-400/70 hover:bg-zinc-900 hover:shadow-lg hover:shadow-orange-950/20 active:scale-[0.99]"
+      className="group flex w-full min-w-0 items-center gap-4 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900/80 p-4 text-left transition hover:-translate-y-0.5 hover:border-orange-400/70 hover:bg-zinc-900 hover:shadow-lg hover:shadow-orange-950/20 active:scale-[0.99]"
     >
       <span className="grid h-12 w-12 shrink-0 place-items-center rounded-2xl border border-orange-500/25 bg-orange-500/10 text-2xl shadow-lg shadow-black/20">
         {iconMap[title] || "⚡"}
       </span>
       <span className="min-w-0 flex-1">
         <span className="flex items-center justify-between gap-3">
-          <span className="block text-base font-black text-white lg:text-lg">{title}</span>
+          <span className="block break-words text-base font-black text-white lg:text-lg">{title}</span>
           <span className="text-zinc-500 transition group-hover:translate-x-1 group-hover:text-orange-400">›</span>
         </span>
-        <span className="mt-1 block text-sm leading-5 text-zinc-400">
+        <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">
           {description}
         </span>
         <span className="mt-2 inline-flex rounded-xl border border-orange-500/20 bg-orange-500/10 px-3 py-1.5 text-center text-xs font-black text-orange-400">
@@ -5255,10 +6482,10 @@ function ActionButton({
   return (
     <button
       onClick={onClick}
-      className="w-full rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-left transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.99]"
+      className="w-full min-w-0 overflow-hidden rounded-2xl border border-zinc-800 bg-zinc-900 p-4 text-left transition hover:border-orange-400 hover:bg-zinc-800 active:scale-[0.99]"
     >
       <span className="block text-base font-black text-white">{title}</span>
-      <span className="mt-1 block text-sm leading-5 text-zinc-400">
+      <span className="mt-1 block break-words text-sm leading-5 text-zinc-400">
         {description}
       </span>
     </button>
@@ -5275,28 +6502,34 @@ function TabCard({ title, children }: { title: string; children: ReactNode }) {
 }
 
 function MiniStat({
+  icon,
   label,
   value,
-  icon,
   helper,
   extraClass = "",
+  compact = false,
 }: {
+  icon: string;
   label: string;
   value: string;
-  icon?: string;
-  helper?: string;
+  helper: string;
   extraClass?: string;
+  compact?: boolean;
 }) {
   return (
-    <div className={`rounded-2xl border border-zinc-800/80 bg-zinc-900/70 p-2.5 shadow-lg shadow-black/10 ${extraClass}`}>
-      <div className="flex items-center gap-2">
-        {icon && <span className="text-sm">{icon}</span>}
-        <p className="truncate text-[9px] font-bold uppercase tracking-[0.16em] text-zinc-500 lg:text-[10px]">
-          {label}
-        </p>
-      </div>
-      <p className="mt-1.5 truncate text-base font-black text-white lg:text-lg">{value}</p>
-      {helper && <p className="mt-1 hidden truncate text-[11px] font-bold text-zinc-500 lg:block">{helper}</p>}
+    <div
+      className={`min-w-0 rounded-2xl border border-zinc-800 bg-zinc-900/70 ${
+        compact ? "p-2.5" : "p-4"
+      } ${extraClass}`}
+    >
+      <p className="flex min-w-0 items-center gap-1.5 text-[9px] font-black uppercase tracking-[0.14em] text-zinc-500">
+        <span className="shrink-0">{icon}</span>
+        <span className="truncate">{label}</span>
+      </p>
+      <p className={`${compact ? "mt-1 text-base" : "mt-2 text-xl"} truncate font-black text-white`}>
+        {value}
+      </p>
+      <p className="mt-0.5 truncate text-[9px] font-bold text-zinc-500">{helper}</p>
     </div>
   );
 }

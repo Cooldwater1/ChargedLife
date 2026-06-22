@@ -1,4 +1,4 @@
-import { ACTIONS_PER_YEAR, jobs } from "./data";
+import { ACTIONS_PER_YEAR, MAX_ENERGY, MIN_ACTION_ENERGY, jobs } from "./data";
 import type {
   AssetCondition,
   BusinessType,
@@ -13,6 +13,7 @@ import type {
   OwnedAsset,
   OwnedBusiness,
   PartTimeJob,
+  ProductProjectStatus,
   RentPriceLevel,
   RentalEventType,
   SelfImprovementAction,
@@ -102,7 +103,7 @@ export const businessTypes: BusinessType[] = [
     id: "online-store",
     name: "Online Store",
     category: "Commerce",
-    startCost: 5000,
+    startCost: 2500,
     difficulty: 2,
     risk: 24,
     revenuePotential: 1.05,
@@ -113,7 +114,7 @@ export const businessTypes: BusinessType[] = [
     id: "marketing-agency",
     name: "Marketing Agency",
     category: "Service",
-    startCost: 7500,
+    startCost: 3500,
     difficulty: 3,
     risk: 28,
     revenuePotential: 1.2,
@@ -124,7 +125,7 @@ export const businessTypes: BusinessType[] = [
     id: "mobile-app",
     name: "Mobile App",
     category: "Tech",
-    startCost: 15000,
+    startCost: 7500,
     difficulty: 5,
     risk: 42,
     revenuePotential: 1.7,
@@ -135,7 +136,7 @@ export const businessTypes: BusinessType[] = [
     id: "game-studio",
     name: "Game Studio",
     category: "Games",
-    startCost: 22000,
+    startCost: 10000,
     difficulty: 6,
     risk: 48,
     revenuePotential: 2,
@@ -146,7 +147,7 @@ export const businessTypes: BusinessType[] = [
     id: "minecraft-server",
     name: "Minecraft Server",
     category: "Gaming",
-    startCost: 10000,
+    startCost: 6000,
     difficulty: 4,
     risk: 40,
     revenuePotential: 1.55,
@@ -157,7 +158,7 @@ export const businessTypes: BusinessType[] = [
     id: "roblox-game",
     name: "Roblox Game",
     category: "Gaming",
-    startCost: 12000,
+    startCost: 5000,
     difficulty: 5,
     risk: 45,
     revenuePotential: 1.85,
@@ -168,7 +169,7 @@ export const businessTypes: BusinessType[] = [
     id: "real-estate-company",
     name: "Real Estate Company",
     category: "Property",
-    startCost: 60000,
+    startCost: 15000,
     difficulty: 5,
     risk: 30,
     revenuePotential: 1.35,
@@ -269,28 +270,56 @@ function recalc(life: LifeStats): LifeStats {
   };
 }
 
-function consumeAction(life: LifeStats): LifeStats {
+function getEnergyCost(life: LifeStats, baseCost = 15) {
+  const stressPenalty = (life.stress ?? 35) >= 85 ? 4 : (life.stress ?? 35) >= 70 ? 2 : 0;
+  const difficultyMultiplier =
+    life.difficulty === "Easy"
+      ? 0.55
+      : life.difficulty === "Normal"
+        ? 0.7
+        : life.difficulty === "Hard"
+          ? 0.9
+          : 1;
+
+  return Math.max(MIN_ACTION_ENERGY, Math.ceil((baseCost + stressPenalty) * difficultyMultiplier));
+}
+
+function consumeAction(life: LifeStats, energyCost = 15): LifeStats {
+  const cost = getEnergyCost(life, energyCost);
+
   return recalc({
     ...life,
+    energy: clamp((life.energy ?? MAX_ENERGY) - cost, 0, MAX_ENERGY),
     actionsLeft: Math.max(0, life.actionsLeft - 1),
   });
 }
 
-function noActions(life: LifeStats): LifeStats | null {
-  if (life.actionsLeft > 0) return null;
+function noActions(life: LifeStats, energyCost = MIN_ACTION_ENERGY): LifeStats | null {
+  const cost = getEnergyCost(life, energyCost);
+
+  if ((life.energy ?? MAX_ENERGY) >= cost) return null;
+
+  const note = `Too low on energy. Recover in Life & Growth or age up when ready.`;
 
   return {
     ...life,
-    popupMessage: `You have already used ${ACTIONS_PER_YEAR}/${ACTIONS_PER_YEAR} actions this year. End the year to continue.`,
-    yearNotes: addYearNote(
-      life,
-      `You have already used ${ACTIONS_PER_YEAR}/${ACTIONS_PER_YEAR} actions this year. End the year to continue.`
-    ),
+    popupMessage: `You are too low on energy. Recover energy in Life & Growth or age up when ready.`,
+    yearNotes: (life.yearNotes || []).includes(note)
+      ? life.yearNotes
+      : addYearNote(life, note),
   };
 }
 
 export function getActionsUsed(life: LifeStats) {
-  return ACTIONS_PER_YEAR - life.actionsLeft;
+  return Math.max(0, ACTIONS_PER_YEAR - life.actionsLeft);
+}
+
+export function getEnergyStatus(life: LifeStats) {
+  const energy = life.energy ?? MAX_ENERGY;
+  if (energy >= 75) return "Fresh";
+  if (energy >= 45) return "Okay";
+  if (energy >= 20) return "Low";
+  return "Exhausted";
 }
 
 export function getJobById(jobId: string) {
@@ -355,6 +384,153 @@ function getBusinessPayroll(life: LifeStats) {
   return Math.floor((life.businessEmployees || 0) * (12000 + Math.max(1, life.businessStage) * 2500));
 }
 
+type BusinessSpecialStatDefinition = {
+  key: string;
+  label: string;
+  description: string;
+};
+
+type BusinessSpecificAction = {
+  id: string;
+  title: string;
+  description: string;
+  statKey: string;
+  statGain: [number, number];
+  valueGain: [number, number];
+  revenueGain: [number, number];
+  riskChange: [number, number];
+  brandGain?: [number, number];
+  qualityGain?: [number, number];
+  managementGain?: [number, number];
+  cashCost?: number;
+  icon: string;
+};
+
+export function getBusinessSpecialStats(typeId: string): BusinessSpecialStatDefinition[] {
+  if (typeId === "online-store") {
+    return [
+      { key: "products", label: "Products", description: "How many sellable product lines you have." },
+      { key: "inventory", label: "Inventory", description: "Stock and fulfillment strength." },
+      { key: "customerSatisfaction", label: "Customer Satisfaction", description: "Reviews, support, returns, and trust." },
+      { key: "adPerformance", label: "Ad Performance", description: "How efficiently ads turn into sales." },
+    ];
+  }
+
+  if (typeId === "marketing-agency") {
+    return [
+      { key: "clients", label: "Clients", description: "Active retainer/client base." },
+      { key: "clientSatisfaction", label: "Client Satisfaction", description: "How happy clients are with results." },
+      { key: "caseStudies", label: "Case Studies", description: "Proof that helps close better deals." },
+      { key: "leadPipeline", label: "Lead Pipeline", description: "Future client opportunities." },
+    ];
+  }
+
+  if (isProductBusinessType(typeId)) {
+    return [];
+  }
+
+  if (typeId === "real-estate-company") {
+    return [
+      { key: "companyCash", label: "Deal Fund", description: "Cash inside the company for buying and renovating deals." },
+      { key: "dealValue", label: "Deal Value", description: "Estimated market value of the current deal/project." },
+      { key: "dealCondition", label: "Condition", description: "How strong the current property/project is." },
+      { key: "managerQuality", label: "Manager Quality", description: "How well managers reduce vacancy and problems." },
+    ];
+  }
+
+  return [
+    { key: "traction", label: "Traction", description: "General business momentum." },
+    { key: "customers", label: "Customers", description: "Customer base." },
+    { key: "operations", label: "Operations", description: "How well the business runs." },
+    { key: "marketFit", label: "Market Fit", description: "How strong the offer is." },
+  ];
+}
+
+function getDefaultBusinessSpecialStats(typeId: string) {
+  return getBusinessSpecialStats(typeId).reduce<Record<string, number>>((stats, stat, index) => {
+    stats[stat.key] = typeId === "real-estate-company" && stat.key === "maintenanceBacklog" ? randomBetween(20, 45) : randomBetween(8 + index * 3, 24 + index * 6);
+    return stats;
+  }, {});
+}
+
+function getSpecialStatsFromLife(life: LifeStats) {
+  const active = (life.businesses || []).find((business) => business.id === life.activeBusinessId);
+  return active?.specialStats || getDefaultBusinessSpecialStats(life.businessTypeId || "online-store");
+}
+
+function updateSpecialStat(life: LifeStats, key: string, amount: number) {
+  const current = getSpecialStatsFromLife(life);
+
+  return {
+    ...current,
+    [key]: clamp((current[key] || 0) + amount),
+  };
+}
+
+export function getBusinessSpecificActions(typeId: string): BusinessSpecificAction[] {
+  if (typeId === "online-store") {
+    return [
+      { id: "add-product", title: "Add Product", description: "Launch another product line and increase catalog depth.", statKey: "products", statGain: [4, 10], valueGain: [9000, 28000], revenueGain: [5000, 18000], riskChange: [1, 5], qualityGain: [1, 3], icon: "📦", cashCost: 1500 },
+      { id: "run-paid-ads", title: "Run Paid Ads", description: "Scale traffic through ads. Good ad performance matters.", statKey: "adPerformance", statGain: [5, 12], valueGain: [7000, 40000], revenueGain: [9000, 34000], riskChange: [2, 8], brandGain: [2, 6], icon: "📣", cashCost: 2500 },
+      { id: "optimize-shipping", title: "Optimize Shipping", description: "Reduce delays, returns, and customer frustration.", statKey: "customerSatisfaction", statGain: [5, 12], valueGain: [6000, 22000], revenueGain: [2000, 10000], riskChange: [-8, -2], managementGain: [2, 5], icon: "🚚", cashCost: 2000 },
+    ];
+  }
+
+  if (typeId === "marketing-agency") {
+    return [
+      { id: "find-client", title: "Find Client", description: "Prospect and close a new client contract.", statKey: "clients", statGain: [5, 12], valueGain: [8000, 35000], revenueGain: [9000, 30000], riskChange: [1, 5], brandGain: [1, 4], icon: "🤝" },
+      { id: "create-case-study", title: "Create Case Study", description: "Turn results into proof that helps future sales.", statKey: "caseStudies", statGain: [6, 14], valueGain: [7000, 26000], revenueGain: [3000, 12000], riskChange: [-4, 1], brandGain: [4, 8], icon: "📊", cashCost: 1000 },
+      { id: "improve-service", title: "Improve Service", description: "Increase client satisfaction and reduce churn.", statKey: "clientSatisfaction", statGain: [5, 13], valueGain: [6000, 24000], revenueGain: [3000, 15000], riskChange: [-7, -1], qualityGain: [2, 5], icon: "⭐" },
+    ];
+  }
+
+  if (typeId === "mobile-app") {
+    return [
+      { id: "build-feature", title: "Build Feature", description: "Add a valuable feature to grow retention and users.", statKey: "users", statGain: [6, 16], valueGain: [15000, 65000], revenueGain: [5000, 26000], riskChange: [2, 8], qualityGain: [2, 6], icon: "🧩", cashCost: 3500 },
+      { id: "fix-bugs", title: "Fix Bugs", description: "Improve app rating and reduce technical risk.", statKey: "appRating", statGain: [5, 12], valueGain: [8000, 28000], revenueGain: [2000, 12000], riskChange: [-10, -3], qualityGain: [2, 5], icon: "🐛", cashCost: 2500 },
+      { id: "improve-monetization", title: "Improve Monetization", description: "Convert usage into revenue without killing trust.", statKey: "monetization", statGain: [5, 12], valueGain: [12000, 55000], revenueGain: [9000, 36000], riskChange: [1, 7], icon: "💳", cashCost: 2500 },
+    ];
+  }
+
+  if (typeId === "game-studio") {
+    return [
+      { id: "develop-game", title: "Develop Game", description: "Build the game and improve its quality.", statKey: "gameQuality", statGain: [6, 15], valueGain: [14000, 60000], revenueGain: [2000, 16000], riskChange: [2, 8], qualityGain: [3, 8], icon: "🎮", cashCost: 3000 },
+      { id: "release-demo", title: "Release Demo", description: "Get attention and build wishlists before launch.", statKey: "wishlist", statGain: [6, 18], valueGain: [10000, 50000], revenueGain: [3000, 18000], riskChange: [1, 7], brandGain: [3, 8], icon: "🎬", cashCost: 2500 },
+      { id: "patch-game", title: "Patch Game", description: "Improve review score and bring players back.", statKey: "reviewScore", statGain: [5, 13], valueGain: [8000, 35000], revenueGain: [4000, 18000], riskChange: [-8, -2], qualityGain: [2, 6], icon: "🛠️", cashCost: 2000 },
+    ];
+  }
+
+  if (typeId === "minecraft-server") {
+    return [
+      { id: "release-update", title: "Release Update", description: "Add content, improve player activity, and grow donations.", statKey: "players", statGain: [6, 16], valueGain: [12000, 55000], revenueGain: [6000, 26000], riskChange: [2, 8], qualityGain: [2, 5], icon: "🧱", cashCost: 2500 },
+      { id: "host-event", title: "Host Event", description: "Bring players online and create community hype.", statKey: "communityTrust", statGain: [5, 14], valueGain: [9000, 40000], revenueGain: [4000, 22000], riskChange: [1, 6], brandGain: [2, 6], icon: "🏆", cashCost: 2000 },
+      { id: "balance-economy", title: "Balance Economy", description: "Fix inflation, exploits, and unfair money loops.", statKey: "economyBalance", statGain: [6, 16], valueGain: [7000, 30000], revenueGain: [2000, 12000], riskChange: [-12, -4], managementGain: [2, 5], icon: "⚖️", cashCost: 1500 },
+      { id: "improve-store", title: "Improve Store", description: "Improve monetization without making players angry.", statKey: "donations", statGain: [5, 13], valueGain: [10000, 45000], revenueGain: [8000, 32000], riskChange: [1, 7], icon: "🛒", cashCost: 1800 },
+    ];
+  }
+
+  if (typeId === "roblox-game") {
+    return [
+      { id: "release-update", title: "Release Update", description: "Add content and increase visits/player retention.", statKey: "visits", statGain: [7, 18], valueGain: [14000, 70000], revenueGain: [5000, 28000], riskChange: [2, 8], qualityGain: [2, 6], icon: "🧱", cashCost: 2500 },
+      { id: "improve-gamepass", title: "Improve Gamepass", description: "Increase Robux revenue with better premium offers.", statKey: "robuxRevenue", statGain: [5, 14], valueGain: [12000, 60000], revenueGain: [9000, 42000], riskChange: [1, 8], icon: "💎", cashCost: 2000 },
+      { id: "improve-thumbnail", title: "Improve Thumbnail", description: "Better icon/thumbnail means better click-through.", statKey: "concurrentPlayers", statGain: [5, 13], valueGain: [9000, 38000], revenueGain: [4000, 20000], riskChange: [1, 5], brandGain: [3, 8], icon: "🖼️", cashCost: 1500 },
+    ];
+  }
+
+  if (typeId === "real-estate-company") {
+    return [
+      { id: "find-property-deal", title: "Find Property Deal", description: "Source an undervalued deal or management contract.", statKey: "propertiesManaged", statGain: [4, 10], valueGain: [18000, 80000], revenueGain: [6000, 24000], riskChange: [2, 8], icon: "🏘️", cashCost: 4000 },
+      { id: "manage-rentals", title: "Manage Rentals", description: "Improve contracts and cashflow stability.", statKey: "rentalContracts", statGain: [5, 12], valueGain: [12000, 55000], revenueGain: [6000, 26000], riskChange: [-6, 1], managementGain: [2, 6], icon: "📄", cashCost: 2500 },
+      { id: "clear-maintenance", title: "Clear Maintenance", description: "Lower backlog and reduce long-term risk.", statKey: "maintenanceBacklog", statGain: [-12, -4], valueGain: [7000, 35000], revenueGain: [1000, 8000], riskChange: [-12, -4], managementGain: [2, 6], icon: "🔧", cashCost: 3000 },
+      { id: "raise-capital", title: "Raise Capital", description: "Build investor trust and prepare bigger projects.", statKey: "investorTrust", statGain: [5, 14], valueGain: [15000, 70000], revenueGain: [2000, 12000], riskChange: [-6, 2], brandGain: [2, 6], icon: "🏦", cashCost: 1000 },
+    ];
+  }
+
+  return [
+    { id: "build-traction", title: "Build Traction", description: "Grow the business in a general way.", statKey: "traction", statGain: [5, 12], valueGain: [8000, 30000], revenueGain: [3000, 15000], riskChange: [0, 5], icon: "🚀" },
+  ];
+}
+
 function businessFromLife(life: LifeStats): OwnedBusiness | null {
   if (life.business === "None" || !life.activeBusinessId) return null;
 
@@ -372,6 +548,8 @@ function businessFromLife(life: LifeStats): OwnedBusiness | null {
     management: life.businessManagement || 0,
     payroll: life.businessPayroll || 0,
     ownership: life.businessOwnership || 100,
+    specialStats: getSpecialStatsFromLife(life),
+    project: getProjectFromLife(life),
   };
 }
 
@@ -410,6 +588,7 @@ function applyBusinessToLife(life: LifeStats, business: OwnedBusiness | null): L
     businessPayroll: business.payroll,
     businessOwnership: business.ownership,
     activeBusinessId: business.id,
+    // Business-specific stats live inside the active business object.
   };
 }
 
@@ -426,6 +605,656 @@ function upsertActiveBusiness(life: LifeStats): LifeStats {
       ? businesses.map((business) => (business.id === active.id ? active : business))
       : [...businesses, active],
   };
+}
+
+export function getBusinessMilestones(typeId: string) {
+  if (typeId === "online-store") {
+    return [
+      { id: "store-products-25", label: "Launch 25 products", statKey: "products", target: 25 },
+      { id: "store-satisfaction-80", label: "Reach 80 customer satisfaction", statKey: "customerSatisfaction", target: 80 },
+      { id: "store-revenue-100k", label: "Reach $100k revenue", statKey: "revenue", target: 100000 },
+    ];
+  }
+
+  if (typeId === "marketing-agency") {
+    return [
+      { id: "agency-clients-10", label: "Sign 10 clients", statKey: "clients", target: 10 },
+      { id: "agency-cases-25", label: "Build 25 case study power", statKey: "caseStudies", target: 25 },
+      { id: "agency-satisfaction-85", label: "Reach 85 client satisfaction", statKey: "clientSatisfaction", target: 85 },
+    ];
+  }
+
+  if (typeId === "mobile-app") {
+    return [
+      { id: "app-users-50", label: "Reach 50 user strength", statKey: "users", target: 50 },
+      { id: "app-rating-80", label: "Reach 80 app rating", statKey: "appRating", target: 80 },
+      { id: "app-monetization-60", label: "Reach 60 monetization", statKey: "monetization", target: 60 },
+    ];
+  }
+
+  if (typeId === "game-studio") {
+    return [
+      { id: "studio-quality-80", label: "Reach 80 game quality", statKey: "gameQuality", target: 80 },
+      { id: "studio-fanbase-60", label: "Reach 60 fanbase", statKey: "fanbase", target: 60 },
+      { id: "studio-wishlist-70", label: "Reach 70 wishlist", statKey: "wishlist", target: 70 },
+    ];
+  }
+
+  if (typeId === "minecraft-server") {
+    return [
+      { id: "mc-players-50", label: "Reach 50 player strength", statKey: "players", target: 50 },
+      { id: "mc-trust-80", label: "Reach 80 community trust", statKey: "communityTrust", target: 80 },
+      { id: "mc-donations-60", label: "Reach 60 donation strength", statKey: "donations", target: 60 },
+      { id: "mc-economy-80", label: "Reach 80 economy balance", statKey: "economyBalance", target: 80 },
+    ];
+  }
+
+  if (typeId === "roblox-game") {
+    return [
+      { id: "roblox-visits-70", label: "Reach 70 visit strength", statKey: "visits", target: 70 },
+      { id: "roblox-ccu-50", label: "Reach 50 CCU strength", statKey: "concurrentPlayers", target: 50 },
+      { id: "roblox-revenue-60", label: "Reach 60 Robux revenue", statKey: "robuxRevenue", target: 60 },
+    ];
+  }
+
+  if (typeId === "real-estate-company") {
+    return [
+      { id: "realestate-properties-30", label: "Reach 30 managed property strength", statKey: "propertiesManaged", target: 30 },
+      { id: "realestate-contracts-50", label: "Reach 50 rental contract strength", statKey: "rentalContracts", target: 50 },
+      { id: "realestate-trust-70", label: "Reach 70 investor trust", statKey: "investorTrust", target: 70 },
+    ];
+  }
+
+  return [
+    { id: "business-value-100k", label: "Reach $100k business value", statKey: "value", target: 100000 },
+  ];
+}
+
+export function getBusinessMilestoneProgress(business: OwnedBusiness) {
+  return getBusinessMilestones(business.typeId).map((milestone) => {
+    const value =
+      milestone.statKey === "value"
+        ? business.value
+        : milestone.statKey === "revenue"
+          ? business.revenue
+          : business.specialStats?.[milestone.statKey] || 0;
+
+    return {
+      ...milestone,
+      value,
+      progress: Math.max(0, Math.min(100, Math.floor((value / milestone.target) * 100))),
+      completed: value >= milestone.target,
+    };
+  });
+}
+
+function applySpecialStatToActiveBusiness(life: LifeStats, statKey: string, amount: number) {
+  const specialStats = updateSpecialStat(life, statKey, amount);
+
+  return {
+    ...life,
+    businesses: (life.businesses || []).map((business) =>
+      business.id === life.activeBusinessId
+        ? {
+            ...business,
+            specialStats,
+          }
+        : business
+    ),
+  };
+}
+
+function applyBusinessTypeYearlyEvent(life: LifeStats): LifeStats {
+  if (life.business === "None" || randomBetween(1, 100) > 45) return life;
+
+  const typeId = life.businessTypeId;
+  const positive = randomBetween(1, 100) > life.businessRisk;
+  let message = "";
+  let statKey = "traction";
+  let statChange = 0;
+  let valueChange = 0;
+  let revenueChange = 0;
+  let riskChange = 0;
+  let brandChange = 0;
+  let qualityChange = 0;
+
+  if (typeId === "minecraft-server") {
+    statKey = positive ? "players" : "economyBalance";
+
+    if (positive) {
+      message = "A streamer joined your Minecraft server and brought new players.";
+      statChange = randomBetween(6, 14);
+      valueChange = randomBetween(12000, 60000);
+      revenueChange = randomBetween(5000, 28000);
+      brandChange = randomBetween(2, 6);
+      riskChange = randomBetween(0, 5);
+    } else {
+      message = "A dupe exploit hurt your server economy and player trust.";
+      statChange = -randomBetween(5, 14);
+      valueChange = -randomBetween(8000, 35000);
+      revenueChange = -randomBetween(2000, 14000);
+      riskChange = randomBetween(5, 15);
+    }
+  } else if (typeId === "online-store") {
+    statKey = positive ? "customerSatisfaction" : "inventory";
+
+    if (positive) {
+      message = "One of your products went viral and boosted store sales.";
+      statChange = randomBetween(5, 12);
+      valueChange = randomBetween(10000, 45000);
+      revenueChange = randomBetween(8000, 36000);
+      brandChange = randomBetween(2, 7);
+    } else {
+      message = "Supplier delays caused customer complaints and lost revenue.";
+      statChange = -randomBetween(4, 12);
+      valueChange = -randomBetween(6000, 26000);
+      revenueChange = -randomBetween(4000, 18000);
+      riskChange = randomBetween(4, 12);
+    }
+  } else if (typeId === "marketing-agency") {
+    statKey = positive ? "clients" : "clientSatisfaction";
+
+    if (positive) {
+      message = "A referral brought in a valuable new client.";
+      statChange = randomBetween(4, 10);
+      valueChange = randomBetween(9000, 40000);
+      revenueChange = randomBetween(8000, 30000);
+      brandChange = randomBetween(2, 6);
+    } else {
+      message = "A client cancelled their retainer after weak campaign results.";
+      statChange = -randomBetween(4, 12);
+      valueChange = -randomBetween(7000, 30000);
+      revenueChange = -randomBetween(6000, 22000);
+      riskChange = randomBetween(4, 10);
+    }
+  } else if (typeId === "mobile-app") {
+    statKey = positive ? "users" : "appRating";
+
+    if (positive) {
+      message = "An influencer recommended your app and user growth jumped.";
+      statChange = randomBetween(6, 15);
+      valueChange = randomBetween(15000, 70000);
+      revenueChange = randomBetween(5000, 26000);
+      brandChange = randomBetween(2, 7);
+    } else {
+      message = "A buggy update caused bad reviews and churn.";
+      statChange = -randomBetween(5, 14);
+      valueChange = -randomBetween(10000, 45000);
+      revenueChange = -randomBetween(4000, 20000);
+      riskChange = randomBetween(5, 13);
+    }
+  } else if (typeId === "game-studio") {
+    statKey = positive ? "wishlist" : "reviewScore";
+
+    if (positive) {
+      message = "A demo clip gained attention and wishlists increased.";
+      statChange = randomBetween(6, 16);
+      valueChange = randomBetween(12000, 65000);
+      revenueChange = randomBetween(3000, 20000);
+      brandChange = randomBetween(3, 8);
+    } else {
+      message = "Early feedback criticized the game direction.";
+      statChange = -randomBetween(4, 12);
+      valueChange = -randomBetween(8000, 35000);
+      revenueChange = -randomBetween(1000, 12000);
+      riskChange = randomBetween(5, 12);
+      qualityChange = -randomBetween(1, 5);
+    }
+  } else if (typeId === "roblox-game") {
+    statKey = positive ? "visits" : "gameRating";
+
+    if (positive) {
+      message = "Your Roblox game gained traction from a popular video.";
+      statChange = randomBetween(6, 16);
+      valueChange = randomBetween(12000, 65000);
+      revenueChange = randomBetween(6000, 30000);
+      brandChange = randomBetween(2, 7);
+    } else {
+      message = "Players disliked the monetization and rating dropped.";
+      statChange = -randomBetween(4, 12);
+      valueChange = -randomBetween(8000, 35000);
+      revenueChange = -randomBetween(3000, 18000);
+      riskChange = randomBetween(5, 13);
+    }
+  } else if (typeId === "real-estate-company") {
+    statKey = positive ? "investorTrust" : "maintenanceBacklog";
+
+    if (positive) {
+      message = "An investor offered better terms after seeing your property performance.";
+      statChange = randomBetween(5, 13);
+      valueChange = randomBetween(15000, 80000);
+      revenueChange = randomBetween(4000, 24000);
+      riskChange = -randomBetween(1, 6);
+      brandChange = randomBetween(2, 6);
+    } else {
+      message = "Maintenance costs spiked and hurt cashflow.";
+      statChange = randomBetween(5, 14);
+      valueChange = -randomBetween(9000, 40000);
+      revenueChange = -randomBetween(5000, 22000);
+      riskChange = randomBetween(5, 13);
+    }
+  } else {
+    message = positive ? "The business gained positive market attention." : "The business faced a market setback.";
+    statChange = positive ? randomBetween(4, 10) : -randomBetween(4, 10);
+    valueChange = positive ? randomBetween(8000, 35000) : -randomBetween(7000, 30000);
+    revenueChange = positive ? randomBetween(3000, 18000) : -randomBetween(3000, 15000);
+    riskChange = positive ? randomBetween(-3, 3) : randomBetween(4, 10);
+  }
+
+  const updated = applySpecialStatToActiveBusiness(
+    {
+      ...life,
+      businessValue: Math.max(0, life.businessValue + valueChange),
+      businessRevenue: Math.max(0, life.businessRevenue + revenueChange),
+      businessRisk: clamp(life.businessRisk + riskChange),
+      businessBrand: clamp((life.businessBrand || 0) + brandChange),
+      businessProductQuality: clamp((life.businessProductQuality || 0) + qualityChange),
+      eventLog: addLog(
+        life,
+        `Business Event: ${message} ${valueChange >= 0 ? "Value +" : "Value "}${formatMoney(valueChange)}.`
+      ),
+      yearNotes: addYearNote(life, `Business Event: ${message}`),
+      popupMessage: message,
+    },
+    statKey,
+    statChange
+  );
+
+  return normalizeBusiness(updated);
+}
+
+function addCompletedBusinessMilestones(life: LifeStats) {
+  if (life.business === "None") return life;
+
+  const activeBusiness = (life.businesses || []).find((business) => business.id === life.activeBusinessId);
+  if (!activeBusiness) return life;
+
+  const completed = getBusinessMilestoneProgress(activeBusiness).filter((milestone) => milestone.completed);
+  let updated = life;
+
+  completed.forEach((milestone) => {
+    const milestoneText = `${life.business}: ${milestone.label}`;
+
+    if (!updated.lifetimeMilestones.includes(milestoneText)) {
+      updated = {
+        ...updated,
+        lifetimeMilestones: addMilestone(updated, milestoneText),
+        reputation: clamp(updated.reputation + 2),
+        eventLog: addLog(updated, `Business Milestone: ${milestoneText}. Reputation +2.`),
+      };
+    }
+  });
+
+  return updated;
+}
+
+
+export function isProductBusinessType(typeId: string) {
+  return ["game-studio", "minecraft-server", "mobile-app", "roblox-game"].includes(typeId);
+}
+
+function getDefaultProductProject(typeId: string): ProductProjectStatus {
+  return {
+    phase: "concept",
+    progress: 0,
+    quality: 10,
+    bugs: typeId === "minecraft-server" ? 35 : 28,
+    hype: 0,
+    updates: 0,
+    releasedAge: 0,
+    lastUpdatedAge: 0,
+    launchScore: 0,
+    activeUsers: 0,
+    yearlyDecay: 0,
+  };
+}
+
+function getProjectFromLife(life: LifeStats) {
+  if (!isProductBusinessType(life.businessTypeId || "none")) return null;
+
+  const active = (life.businesses || []).find((business) => business.id === life.activeBusinessId);
+  return active?.project || getDefaultProductProject(life.businessTypeId || "game-studio");
+}
+
+function setActiveBusinessProject(life: LifeStats, project: ProductProjectStatus) {
+  return {
+    ...life,
+    businesses: (life.businesses || []).map((business) =>
+      business.id === life.activeBusinessId
+        ? {
+            ...business,
+            project,
+          }
+        : business
+    ),
+  };
+}
+
+export function getProductProject(life: LifeStats) {
+  return getProjectFromLife(life);
+}
+
+export function getProductProjectPhaseName(phase: ProductProjectStatus["phase"]) {
+  if (phase === "concept") return "Concept";
+  if (phase === "pre_production") return "Pre-Production";
+  if (phase === "production") return "Production";
+  if (phase === "post_production") return "Post-Production";
+  return "Released / Live";
+}
+
+function getProductBusinessNoun(typeId: string) {
+  if (typeId === "minecraft-server") return "server";
+  if (typeId === "mobile-app") return "app";
+  if (typeId === "roblox-game") return "Roblox game";
+  if (typeId === "game-studio") return "game";
+  return "project";
+}
+
+function getProductActionEnergy(actionId: string) {
+  if (actionId === "project-plan") return 8;
+  if (actionId === "project-build") return 14;
+  if (actionId === "project-polish") return 12;
+  if (actionId === "project-hype") return 10;
+  if (actionId === "project-release") return 18;
+  if (actionId === "project-update") return 14;
+  return 12;
+}
+
+export function getProductLifecycleActions(life: LifeStats) {
+  const project = getProjectFromLife(life);
+  if (!project) return [];
+
+  const noun = getProductBusinessNoun(life.businessTypeId);
+
+  if (project.phase === "released") {
+    return [
+      {
+        id: "project-update",
+        icon: "🔄",
+        title: `Release ${noun === "server" ? "Server Update" : "Update"}`,
+        description: `Keep the ${noun} alive. Restores hype/users and slows revenue decay.`,
+      },
+      {
+        id: "project-polish",
+        icon: "🐛",
+        title: "Fix Bugs",
+        description: "Reduce bugs/exploit risk and protect reviews/trust.",
+      },
+      {
+        id: "project-hype",
+        icon: "📣",
+        title: "Marketing Push",
+        description: "Boost hype and bring attention back to the released product.",
+      },
+    ];
+  }
+
+  return [
+    {
+      id: "project-plan",
+      icon: "🧠",
+      title: project.phase === "concept" ? "Plan Concept" : "Improve Plan",
+      description: "Improve market fit, direction, and lower future launch risk.",
+    },
+    {
+      id: "project-build",
+      icon: life.businessTypeId === "minecraft-server" ? "⛏️" : "🛠️",
+      title:
+        project.phase === "concept" || project.phase === "pre_production"
+          ? "Start Production"
+          : `Build ${noun}`,
+      description: `Increase production progress and quality for the ${noun}.`,
+    },
+    {
+      id: "project-polish",
+      icon: "🐛",
+      title: "Bug Fixing / Polish",
+      description: "Reduce bugs and increase the chance of a good release.",
+    },
+    {
+      id: "project-hype",
+      icon: "📣",
+      title: "Build Hype",
+      description: "Market the project before release. Hype helps launch success.",
+    },
+    {
+      id: "project-release",
+      icon: "🚀",
+      title: `Release ${noun}`,
+      description: "Launch the project. Outcome depends on quality, hype, bugs, risk, luck, and skill.",
+    },
+  ];
+}
+
+export function doProductLifecycleAction(life: LifeStats, actionId: string) {
+  const blocked = noActions(life, getProductActionEnergy(actionId));
+  if (blocked) return blocked;
+
+  if (life.business === "None" || !isProductBusinessType(life.businessTypeId)) {
+    return {
+      ...life,
+      popupMessage: "This business does not use the product lifecycle system.",
+      yearNotes: addYearNote(life, "This business does not use the product lifecycle system."),
+    };
+  }
+
+  const project = getProjectFromLife(life) || getDefaultProductProject(life.businessTypeId);
+  const cost =
+    actionId === "project-release"
+      ? 6000
+      : actionId === "project-update"
+        ? 3500
+        : actionId === "project-build"
+          ? 2500
+          : actionId === "project-polish"
+            ? 1800
+            : actionId === "project-hype"
+              ? 2200
+              : 1000;
+
+  if (life.cash < cost) {
+    return consumeAction(
+      normalizeBusiness({
+        ...life,
+        businessManagement: clamp((life.businessManagement || 0) + 1),
+        businessRisk: clamp((life.businessRisk || 0) - 1),
+        popupMessage: `You could not afford this lifecycle action (${formatMoney(cost)} needed), so you reviewed the project instead. Management +1, risk -1.`,
+        yearNotes: addYearNote(life, `Lifecycle action was too expensive. You reviewed the project instead.`),
+      }),
+      6
+    );
+  }
+
+  let nextProject: ProductProjectStatus = { ...project };
+  let valueGain = 0;
+  let revenueGain = 0;
+  let riskChange = 0;
+  let message = "";
+  const noun = getProductBusinessNoun(life.businessTypeId);
+
+  if (actionId === "project-plan") {
+    nextProject = {
+      ...nextProject,
+      phase: nextProject.phase === "concept" ? "pre_production" : nextProject.phase,
+      quality: clamp(nextProject.quality + randomBetween(2, 6)),
+      progress: clamp(nextProject.progress + randomBetween(4, 10)),
+      bugs: clamp(nextProject.bugs - randomBetween(1, 4)),
+    };
+    valueGain = randomBetween(1000, 8000);
+    riskChange = -randomBetween(1, 4);
+    message = `You improved planning for the ${noun}.`;
+  } else if (actionId === "project-build") {
+    const nextProgress = clamp(nextProject.progress + randomBetween(10, 22));
+    nextProject = {
+      ...nextProject,
+      phase: nextProgress >= 75 ? "post_production" : "production",
+      progress: nextProgress,
+      quality: clamp(nextProject.quality + randomBetween(4, 10)),
+      bugs: clamp(nextProject.bugs + randomBetween(0, 5)),
+    };
+    valueGain = randomBetween(6000, 28000);
+    riskChange = randomBetween(0, 4);
+    message = `You built major parts of the ${noun}.`;
+  } else if (actionId === "project-polish") {
+    nextProject = {
+      ...nextProject,
+      phase: nextProject.phase === "concept" ? "pre_production" : nextProject.phase,
+      quality: clamp(nextProject.quality + randomBetween(2, 7)),
+      bugs: clamp(nextProject.bugs - randomBetween(7, 16)),
+      progress: clamp(nextProject.progress + randomBetween(2, 7)),
+    };
+    valueGain = randomBetween(3000, 18000);
+    riskChange = -randomBetween(2, 7);
+    message = `You fixed bugs and polished the ${noun}.`;
+  } else if (actionId === "project-hype") {
+    nextProject = {
+      ...nextProject,
+      hype: clamp(nextProject.hype + randomBetween(8, 18)),
+    };
+    valueGain = randomBetween(2000, 14000);
+    riskChange = randomBetween(0, 3);
+    message = `You built hype for the ${noun}.`;
+  } else if (actionId === "project-update" && nextProject.phase === "released") {
+    nextProject = {
+      ...nextProject,
+      updates: nextProject.updates + 1,
+      lastUpdatedAge: life.age,
+      hype: clamp(nextProject.hype + randomBetween(6, 16)),
+      quality: clamp(nextProject.quality + randomBetween(2, 7)),
+      bugs: clamp(nextProject.bugs + randomBetween(-8, 5)),
+      yearlyDecay: Math.max(0, nextProject.yearlyDecay - randomBetween(8, 18)),
+      activeUsers: clamp(nextProject.activeUsers + randomBetween(3, 12)),
+    };
+    valueGain = randomBetween(8000, 45000);
+    revenueGain = randomBetween(3000, 26000);
+    riskChange = randomBetween(-5, 4);
+    message = `You released an update and kept the ${noun} alive.`;
+  } else if (actionId === "project-release") {
+    if (nextProject.phase === "released") {
+      return {
+        ...life,
+        popupMessage: `The ${noun} is already released. Use updates to keep it alive.`,
+        yearNotes: addYearNote(life, `The ${noun} is already released.`),
+      };
+    }
+
+    if (nextProject.progress < 75) {
+      return {
+        ...life,
+        popupMessage: `The ${noun} is not ready. Reach at least 75% progress before release.`,
+        yearNotes: addYearNote(life, `The ${noun} is not ready for release.`),
+      };
+    }
+
+    const skill = life.skills[getBusinessTypeById(life.businessTypeId)?.skill || "programming"] || 0;
+    const launchScore =
+      nextProject.quality +
+      nextProject.hype * 0.7 +
+      skill * 4 +
+      life.luck * 0.45 -
+      nextProject.bugs * 0.8 -
+      life.businessRisk * 0.45 +
+      randomBetween(-20, 30);
+
+    const normalizedScore = Math.max(0, Math.floor(launchScore));
+    const multiplier =
+      normalizedScore >= 115
+        ? 5.5
+        : normalizedScore >= 90
+          ? 3.2
+          : normalizedScore >= 70
+            ? 1.8
+            : normalizedScore >= 50
+              ? 0.9
+              : 0.35;
+
+    revenueGain = Math.floor(randomBetween(18000, 65000) * multiplier);
+    valueGain = Math.floor(randomBetween(45000, 160000) * multiplier);
+    riskChange = normalizedScore >= 70 ? -randomBetween(3, 10) : randomBetween(8, 20);
+
+    nextProject = {
+      ...nextProject,
+      phase: "released",
+      releasedAge: life.age,
+      lastUpdatedAge: life.age,
+      launchScore: normalizedScore,
+      activeUsers: clamp(Math.floor(normalizedScore / 1.5)),
+      yearlyDecay: normalizedScore >= 90 ? 6 : normalizedScore >= 70 ? 12 : 22,
+      hype: clamp(nextProject.hype - randomBetween(5, 18)),
+    };
+
+    message =
+      normalizedScore >= 115
+        ? `Legendary launch! The ${noun} exploded in popularity.`
+        : normalizedScore >= 90
+          ? `Strong launch! The ${noun} found real traction.`
+          : normalizedScore >= 70
+            ? `Good launch. The ${noun} made money and gained users.`
+            : normalizedScore >= 50
+              ? `Weak launch. The ${noun} released, but reviews were mixed.`
+              : `Bad launch. The ${noun} released too early and struggled.`;
+  } else {
+    return {
+      ...life,
+      popupMessage: "That lifecycle action is not available right now.",
+      yearNotes: addYearNote(life, "That lifecycle action is not available right now."),
+    };
+  }
+
+  return consumeAction(
+    normalizeBusiness(
+      setActiveBusinessProject(
+        {
+          ...life,
+          cash: life.cash - cost,
+          businessValue: Math.max(0, life.businessValue + valueGain),
+          businessRevenue: Math.max(0, life.businessRevenue + revenueGain),
+          businessRisk: clamp(life.businessRisk + riskChange),
+          businessProductQuality: clamp((life.businessProductQuality || 0) + randomBetween(0, 3)),
+          businessBrand: clamp((life.businessBrand || 0) + (actionId === "project-hype" ? randomBetween(2, 6) : randomBetween(0, 2))),
+          stress: changeStress(life, randomBetween(3, 8)),
+          popupMessage: `${message} ${valueGain > 0 ? `Value +${formatMoney(valueGain)}.` : ""}`,
+          yearNotes: addYearNote(life, `${message} Cost ${formatMoney(cost)}.`),
+        },
+        nextProject
+      )
+    ),
+    getProductActionEnergy(actionId)
+  );
+}
+
+function applyProductLifecycleYearlyUpdate(life: LifeStats): LifeStats {
+  if (life.business === "None" || !isProductBusinessType(life.businessTypeId)) return life;
+
+  const project = getProjectFromLife(life);
+  if (!project || project.phase !== "released") return life;
+
+  const yearsSinceUpdate = project.lastUpdatedAge > 0 ? Math.max(0, life.age - project.lastUpdatedAge) : 0;
+  const decay = Math.min(65, project.yearlyDecay + yearsSinceUpdate * 6);
+  const retainedRevenue = Math.max(0.35, 1 - decay / 100);
+  const revenueLoss = Math.floor(life.businessRevenue * (1 - retainedRevenue));
+  const usersLoss = Math.floor(project.activeUsers * Math.min(0.4, decay / 180));
+  const nextProject = {
+    ...project,
+    activeUsers: Math.max(0, project.activeUsers - usersLoss),
+    hype: clamp(project.hype - randomBetween(3, 9)),
+    yearlyDecay: Math.min(70, project.yearlyDecay + randomBetween(4, 10)),
+  };
+
+  return normalizeBusiness(
+    setActiveBusinessProject(
+      {
+        ...life,
+        businessRevenue: Math.max(0, life.businessRevenue - revenueLoss),
+        businessRisk: clamp(life.businessRisk + (yearsSinceUpdate >= 2 ? randomBetween(3, 9) : randomBetween(0, 3))),
+        eventLog: addLog(
+          life,
+          `${life.business}: released product needs updates. Revenue decay -${formatMoney(revenueLoss)}.`
+        ),
+      },
+      nextProject
+    )
+  );
 }
 
 function getBusinessStageFromValue(value: number) {
@@ -886,8 +1715,8 @@ export function applyStudentLoan(life: LifeStats) {
     ...life,
     studentLoanStatus: "approved",
     studentLoanLimit: limit,
-    popupMessage: `Student loan approved. Limit: ${formatMoney(limit)}.`,
-    yearNotes: addYearNote(life, `Student loan approved. Limit: ${formatMoney(limit)}.`),
+    popupMessage: `Student loan accepted. You were approved for ${formatMoney(limit)}. You can use this loan limit when paying for school.`,
+    yearNotes: addYearNote(life, `Student loan accepted: approved for ${formatMoney(limit)}.`),
   });
 }
 
@@ -1047,21 +1876,48 @@ export function attendDegree(life: LifeStats, degree: DegreeProgram) {
 }
 
 export function doLifeGrowth(life: LifeStats, action: LifeGrowthAction) {
-  const blocked = noActions(life);
-  if (blocked) return blocked;
+  const used = life.recoveryActionsUsed?.[action.id] || 0;
 
-  return consumeAction({
+  if (action.isRecovery && action.maxUsesPerYear !== undefined && used >= action.maxUsesPerYear) {
+    return {
+      ...life,
+      popupMessage: `${action.name} has already been used ${action.maxUsesPerYear} time(s) this year.`,
+      yearNotes: addYearNote(life, `${action.name} is already used up this year.`),
+    };
+  }
+
+  if (!action.isRecovery) {
+    const blocked = noActions(life, Math.abs(action.energyChange || 12));
+    if (blocked) return blocked;
+  }
+
+  const energyChange = action.energyChange || 0;
+  const nextRecoveryUsed = action.isRecovery
+    ? {
+        ...(life.recoveryActionsUsed || {}),
+        [action.id]: used + 1,
+      }
+    : life.recoveryActionsUsed || {};
+
+  const updated = {
     ...life,
     cash: life.cash - action.cashCost,
+    energy: clamp((life.energy ?? MAX_ENERGY) + energyChange, 0, MAX_ENERGY),
+    recoveryActionsUsed: nextRecoveryUsed,
     health: clamp(life.health + action.healthGain),
     happiness: clamp(life.happiness + action.happinessGain),
     intelligence: clamp(life.intelligence + action.intelligenceGain),
     charisma: clamp(life.charisma + action.charismaGain),
     discipline: clamp(life.discipline + action.disciplineGain),
     reputation: clamp(life.reputation + action.reputationGain),
-    stress: changeStress(life, -Math.max(1, Math.floor((action.healthGain + action.happinessGain + action.disciplineGain) / 4))),
-    yearNotes: addYearNote(life, `${action.name}: ${action.description}`),
-  });
+    stress: changeStress(life, action.stressChange || 0),
+    yearNotes: addYearNote(
+      life,
+      `${action.name}: Energy ${energyChange >= 0 ? "+" : ""}${energyChange}, Stress ${(action.stressChange || 0) >= 0 ? "+" : ""}${action.stressChange || 0}.`
+    ),
+  };
+
+  return action.isRecovery ? recalc(updated) : consumeAction(updated, Math.abs(action.energyChange || 12));
 }
 
 export function doSelfImprovement(life: LifeStats, action: SelfImprovementAction) {
@@ -2394,6 +3250,8 @@ export function startBusiness(life: LifeStats, typeId: string) {
     management: clamp(10 + life.skills.business * 7 + randomBetween(0, 8)),
     payroll: 0,
     ownership: 100,
+    specialStats: getDefaultBusinessSpecialStats(businessType.id),
+    project: isProductBusinessType(businessType.id) ? getDefaultProductProject(businessType.id) : null,
   };
 
   return consumeAction(
@@ -2713,6 +3571,507 @@ export function launchProduct(life: LifeStats) {
   );
 }
 
+export function getBusinessActionOutcome(life: LifeStats) {
+  const skillId = getBusinessTypeById(life.businessTypeId)?.skill || "business";
+  const skill = life.skills[skillId] || 0;
+  const score =
+    randomBetween(1, 100) +
+    Math.floor(skill * 3.5) +
+    Math.floor((life.businessManagement || 0) * 0.25) +
+    Math.floor((life.businessProductQuality || 0) * 0.2) +
+    Math.floor((life.businessBrand || 0) * 0.15) +
+    Math.floor((life.luck || 0) * 0.25) -
+    Math.floor((life.businessRisk || 0) * 0.55) -
+    Math.floor((life.stress || 0) * 0.15);
+
+  if (score >= 105) return { type: "great", label: "Great Success", multiplier: 1.65, riskExtra: -4 };
+  if (score >= 78) return { type: "success", label: "Success", multiplier: 1, riskExtra: 0 };
+  if (score >= 52) return { type: "mixed", label: "Mixed Result", multiplier: 0.45, riskExtra: 5 };
+  if (score >= 28) return { type: "fail", label: "Failed", multiplier: -0.2, riskExtra: 10 };
+  return { type: "critical", label: "Critical Failure", multiplier: -0.55, riskExtra: 18 };
+}
+
+function scaleBusinessRoll(base: number, multiplier: number) {
+  return Math.floor(base * multiplier);
+}
+
+function formatMoneyChange(value: number) {
+  return `${value >= 0 ? "+" : "-"}${formatMoney(Math.abs(value))}`;
+}
+
+export function doBusinessSpecificAction(life: LifeStats, actionId: string) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  if (life.business === "None") {
+    return {
+      ...life,
+      popupMessage: "Start or select a business first.",
+      yearNotes: addYearNote(life, "Start or select a business first."),
+    };
+  }
+
+  const action = getBusinessSpecificActions(life.businessTypeId).find((item) => item.id === actionId);
+
+  if (!action) {
+    return {
+      ...life,
+      popupMessage: "That business action is not available for this business type.",
+      yearNotes: addYearNote(life, "That business action is not available for this business type."),
+    };
+  }
+
+  const cost = action.cashCost || 0;
+
+  if (cost > 0 && life.cash < cost) {
+    return consumeAction(
+      normalizeBusiness({
+        ...life,
+        businessManagement: clamp((life.businessManagement || 0) + 1),
+        businessRisk: clamp((life.businessRisk || 0) - 1),
+        popupMessage: `You could not afford ${action.title} (${formatMoney(cost)} needed), so you reviewed the business instead. Management +1, risk -1.`,
+        yearNotes: addYearNote(life, `${action.title} was too expensive. You reviewed the business instead.`),
+      }),
+      6
+    );
+  }
+
+  const outcome = getBusinessActionOutcome(life);
+
+  const rawStatGain = randomBetween(action.statGain[0], action.statGain[1]);
+  const rawValueGain = randomBetween(action.valueGain[0], action.valueGain[1]);
+  const rawRevenueGain = randomBetween(action.revenueGain[0], action.revenueGain[1]);
+  const rawRiskChange = randomBetween(action.riskChange[0], action.riskChange[1]);
+
+  const statGain = outcome.type === "critical" ? -Math.max(3, Math.floor(rawStatGain * 0.75)) : scaleBusinessRoll(rawStatGain, outcome.multiplier);
+  const valueGain = scaleBusinessRoll(rawValueGain, outcome.multiplier);
+  const revenueGain = scaleBusinessRoll(rawRevenueGain, outcome.multiplier);
+  const riskChange = rawRiskChange + outcome.riskExtra;
+
+  const qualityGain = action.qualityGain ? scaleBusinessRoll(randomBetween(action.qualityGain[0], action.qualityGain[1]), Math.max(0, outcome.multiplier)) : 0;
+  const brandGain = action.brandGain ? scaleBusinessRoll(randomBetween(action.brandGain[0], action.brandGain[1]), Math.max(0, outcome.multiplier)) : 0;
+  const managementGain = action.managementGain ? scaleBusinessRoll(randomBetween(action.managementGain[0], action.managementGain[1]), Math.max(0, outcome.multiplier)) : 0;
+
+  const specialStats = updateSpecialStat(life, action.statKey, statGain);
+  const outcomeMessage =
+    outcome.type === "great"
+      ? `${action.title}: Great success! The move worked better than expected.`
+      : outcome.type === "success"
+        ? `${action.title}: Success. The business improved.`
+        : outcome.type === "mixed"
+          ? `${action.title}: Mixed result. Some progress, but risk increased.`
+          : outcome.type === "fail"
+            ? `${action.title}: Failed. The action cost money and hurt momentum.`
+            : `${action.title}: Critical failure. A serious mistake damaged the business.`;
+
+  return consumeAction(
+    normalizeBusiness({
+      ...life,
+      cash: life.cash - cost,
+      businessValue: Math.max(0, life.businessValue + valueGain),
+      businessRevenue: Math.max(0, life.businessRevenue + revenueGain),
+      businessRisk: clamp(life.businessRisk + riskChange),
+      businessProductQuality: clamp((life.businessProductQuality || 0) + qualityGain),
+      businessBrand: clamp((life.businessBrand || 0) + brandGain),
+      businessManagement: clamp((life.businessManagement || 0) + managementGain),
+      stress: changeStress(life, randomBetween(2, 7)),
+      reputation: clamp(life.reputation + (outcome.type === "great" ? 2 : outcome.type === "critical" ? -2 : 0)),
+      businesses: (life.businesses || []).map((business) =>
+        business.id === life.activeBusinessId
+          ? {
+              ...business,
+              specialStats,
+            }
+          : business
+      ),
+      popupMessage: `${outcomeMessage} ${action.statKey} ${statGain >= 0 ? "+" : ""}${statGain}, value ${formatMoneyChange(valueGain)}, revenue ${formatMoneyChange(revenueGain)}, risk ${riskChange >= 0 ? "+" : ""}${riskChange}.`,
+      yearNotes: addYearNote(life, `${life.business}: ${outcome.label}. Value ${formatMoneyChange(valueGain)}, revenue ${formatMoneyChange(revenueGain)}, risk ${riskChange >= 0 ? "+" : ""}${riskChange}.`),
+    })
+  );
+}
+
+function getRealEstateStats(life: LifeStats) {
+  const stats = getSpecialStatsFromLife(life);
+
+  return {
+    companyCash: stats.companyCash || 0,
+    currentDeal: stats.currentDeal || 0,
+    dealPrice: stats.dealPrice || 0,
+    dealValue: stats.dealValue || 0,
+    dealCondition: stats.dealCondition || 0,
+    dealRent: stats.dealRent || 0,
+    dealRisk: stats.dealRisk || 0,
+    ownedProject: stats.ownedProject || 0,
+    renovationProgress: stats.renovationProgress || 0,
+    rentalUnits: stats.rentalUnits || 0,
+    rentedUnits: stats.rentedUnits || 0,
+    managerQuality: stats.managerQuality || 0,
+    flipProfit: stats.flipProfit || 0,
+  };
+}
+
+function updateRealEstateStats(life: LifeStats, nextStats: Record<string, number>) {
+  const current = getSpecialStatsFromLife(life);
+  const specialStats = {
+    ...current,
+    ...nextStats,
+  };
+
+  return {
+    ...life,
+    businesses: (life.businesses || []).map((business) =>
+      business.id === life.activeBusinessId
+        ? {
+            ...business,
+            specialStats,
+          }
+        : business
+    ),
+  };
+}
+
+function requireRealEstateCompany(life: LifeStats) {
+  if (life.business !== "None" && life.businessTypeId === "real-estate-company") return null;
+
+  return {
+    ...life,
+    popupMessage: "You need to start or select a Real Estate Company first.",
+    yearNotes: addYearNote(life, "You need a Real Estate Company for this action."),
+  };
+}
+
+export function realEstateAddFunds(life: LifeStats, amount: number) {
+  const blocked = requireRealEstateCompany(life);
+  if (blocked) return blocked;
+
+  if (life.cash < amount) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(amount)} cash to add that much to the deal fund.`,
+      yearNotes: addYearNote(life, `Not enough cash to add ${formatMoney(amount)} to Real Estate fund.`),
+    };
+  }
+
+  const stats = getRealEstateStats(life);
+
+  return recalc(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          cash: life.cash - amount,
+          businessValue: life.businessValue + Math.floor(amount * 0.8),
+          popupMessage: `Added ${formatMoney(amount)} to your Real Estate Deal Fund. This money can now be used to buy, renovate, or manage property deals.`,
+          yearNotes: addYearNote(life, `Real Estate fund +${formatMoney(amount)}.`),
+        },
+        {
+          companyCash: stats.companyCash + amount,
+        }
+      )
+    )
+  );
+}
+
+export function realEstateFindDeal(life: LifeStats) {
+  const blockedRealEstate = requireRealEstateCompany(life);
+  if (blockedRealEstate) return blockedRealEstate;
+
+  const blocked = noActions(life, 12);
+  if (blocked) return blocked;
+
+  const finderCost = 750;
+
+  if (life.cash < finderCost) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(finderCost)} to search for property deals.`,
+      yearNotes: addYearNote(life, "Not enough cash to search for real estate deals."),
+    };
+  }
+
+  const price = randomBetween(45000, 180000);
+  const undervalue = randomBetween(-35000, 65000);
+  const value = Math.max(25000, price + undervalue);
+  const condition = randomBetween(25, 78);
+  const rent = Math.max(4500, Math.floor(value * randomBetween(5, 11) / 100));
+  const risk = clamp(randomBetween(25, 85) + (condition < 40 ? 15 : 0));
+  const stats = getRealEstateStats(life);
+  const qualityText = value > price ? "undervalued" : "overpriced";
+
+  return consumeAction(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          cash: life.cash - finderCost,
+          businessRisk: clamp(life.businessRisk + randomBetween(0, 4)),
+          popupMessage: `Found a ${qualityText} property deal. Price ${formatMoney(price)}, estimated value ${formatMoney(value)}, condition ${condition}/100, yearly rent potential ${formatMoney(rent)}, risk ${risk}/100. Decide if you want to buy it or search again.`,
+          yearNotes: addYearNote(life, `Real Estate deal found: ${formatMoney(price)} price, ${formatMoney(value)} value.`),
+        },
+        {
+          ...stats,
+          currentDeal: 1,
+          dealPrice: price,
+          dealValue: value,
+          dealCondition: condition,
+          dealRent: rent,
+          dealRisk: risk,
+          renovationProgress: 0,
+        }
+      )
+    ),
+    12
+  );
+}
+
+export function realEstateBuyDeal(life: LifeStats) {
+  const blockedRealEstate = requireRealEstateCompany(life);
+  if (blockedRealEstate) return blockedRealEstate;
+
+  const blocked = noActions(life, 14);
+  if (blocked) return blocked;
+
+  const stats = getRealEstateStats(life);
+
+  if (!stats.currentDeal) {
+    return {
+      ...life,
+      popupMessage: "Find a property deal first.",
+      yearNotes: addYearNote(life, "Find a property deal before buying."),
+    };
+  }
+
+  if (stats.companyCash < stats.dealPrice) {
+    return {
+      ...life,
+      popupMessage: `Your deal fund needs ${formatMoney(stats.dealPrice)} to buy this property. Add funds first.`,
+      yearNotes: addYearNote(life, "Real Estate deal fund is too low to buy the deal."),
+    };
+  }
+
+  return consumeAction(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          businessValue: Math.max(0, life.businessValue + stats.dealValue),
+          businessRisk: clamp(life.businessRisk + Math.floor(stats.dealRisk / 8)),
+          popupMessage: `Bought the property for ${formatMoney(stats.dealPrice)} using your Deal Fund. Next: renovate to improve value, rent it out for yearly revenue, or fix & flip for a risky one-time sale.`,
+          yearNotes: addYearNote(life, `Bought Real Estate deal for ${formatMoney(stats.dealPrice)}.`),
+        },
+        {
+          companyCash: stats.companyCash - stats.dealPrice,
+          ownedProject: 1,
+          currentDeal: 0,
+          renovationProgress: 0,
+          rentalUnits: 0,
+          rentedUnits: 0,
+        }
+      )
+    ),
+    14
+  );
+}
+
+export function realEstateRenovate(life: LifeStats) {
+  const blockedRealEstate = requireRealEstateCompany(life);
+  if (blockedRealEstate) return blockedRealEstate;
+
+  const blocked = noActions(life, 16);
+  if (blocked) return blocked;
+
+  const stats = getRealEstateStats(life);
+
+  if (!stats.ownedProject) {
+    return {
+      ...life,
+      popupMessage: "Buy a property deal before renovating.",
+      yearNotes: addYearNote(life, "No Real Estate project to renovate."),
+    };
+  }
+
+  const cost = randomBetween(6000, 18000);
+
+  if (stats.companyCash < cost) {
+    return {
+      ...life,
+      popupMessage: `Your deal fund needs ${formatMoney(cost)} for this renovation.`,
+      yearNotes: addYearNote(life, "Real Estate fund too low for renovation."),
+    };
+  }
+
+  const progress = randomBetween(12, 28);
+  const hiddenDamage = randomBetween(1, 100) <= stats.dealRisk - Math.floor(life.businessManagement / 4);
+  const valueGain = hiddenDamage ? -randomBetween(2500, 12000) : randomBetween(12000, 42000);
+  const conditionGain = hiddenDamage ? randomBetween(0, 4) : randomBetween(8, 18);
+
+  return consumeAction(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          businessValue: Math.max(0, life.businessValue + valueGain),
+          businessRisk: clamp(life.businessRisk + (hiddenDamage ? 10 : -4)),
+          stress: changeStress(life, hiddenDamage ? 10 : 5),
+          popupMessage: hiddenDamage
+            ? `Renovation problem! Hidden damage was found. Fund -${formatMoney(cost)}, value ${formatMoneyChange(valueGain)}, risk +10.`
+            : `Renovation improved the property. Deal Fund -${formatMoney(cost)}, estimated value +${formatMoney(valueGain)}. Better condition improves rent and flip odds.`,
+          yearNotes: addYearNote(life, hiddenDamage ? "Real Estate renovation found hidden damage." : "Real Estate renovation improved the property."),
+        },
+        {
+          companyCash: stats.companyCash - cost,
+          renovationProgress: clamp(stats.renovationProgress + progress),
+          dealCondition: clamp(stats.dealCondition + conditionGain),
+        }
+      )
+    ),
+    16
+  );
+}
+
+export function realEstateRentProject(life: LifeStats) {
+  const blockedRealEstate = requireRealEstateCompany(life);
+  if (blockedRealEstate) return blockedRealEstate;
+
+  const blocked = noActions(life, 12);
+  if (blocked) return blocked;
+
+  const stats = getRealEstateStats(life);
+
+  if (!stats.ownedProject) {
+    return {
+      ...life,
+      popupMessage: "Buy a property before renting it out.",
+      yearNotes: addYearNote(life, "No Real Estate project to rent out."),
+    };
+  }
+
+  const unitChance = stats.dealCondition + stats.renovationProgress + Math.floor(life.businessManagement / 2) + Math.floor(life.luck / 3) - stats.dealRisk;
+  const success = randomBetween(1, 100) <= unitChance;
+  const units = success ? randomBetween(1, 3) : 0;
+  const revenueGain = success ? stats.dealRent * units : 0;
+
+  return consumeAction(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          businessRevenue: Math.max(0, life.businessRevenue + revenueGain),
+          businessRisk: clamp(life.businessRisk + (success ? -3 : 8)),
+          popupMessage: success
+            ? `Tenant search succeeded. You rented out ${units} unit(s). Yearly business revenue +${formatMoney(revenueGain)}.`
+            : "Tenant search failed. The property stayed vacant this year, so it produced no rental income and risk increased.",
+          yearNotes: addYearNote(life, success ? `Real Estate rented ${units} unit(s).` : "Real Estate tenant search failed."),
+        },
+        {
+          rentalUnits: stats.rentalUnits + units,
+          rentedUnits: stats.rentedUnits + units,
+        }
+      )
+    ),
+    12
+  );
+}
+
+export function realEstateFlipProject(life: LifeStats) {
+  const blockedRealEstate = requireRealEstateCompany(life);
+  if (blockedRealEstate) return blockedRealEstate;
+
+  const blocked = noActions(life, 18);
+  if (blocked) return blocked;
+
+  const stats = getRealEstateStats(life);
+
+  if (!stats.ownedProject) {
+    return {
+      ...life,
+      popupMessage: "Buy a property before trying to flip.",
+      yearNotes: addYearNote(life, "No Real Estate project to flip."),
+    };
+  }
+
+  const sellScore =
+    stats.dealCondition +
+    stats.renovationProgress +
+    Math.floor((life.skills.realEstate || 0) * 5) +
+    Math.floor(life.luck / 2) -
+    stats.dealRisk +
+    randomBetween(-25, 35);
+
+  const saleMultiplier = sellScore >= 110 ? 1.35 : sellScore >= 85 ? 1.18 : sellScore >= 60 ? 1.03 : sellScore >= 35 ? 0.88 : 0.68;
+  const salePrice = Math.floor(stats.dealValue * saleMultiplier);
+  const profit = salePrice - stats.dealPrice;
+
+  return consumeAction(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          cash: life.cash + salePrice,
+          businessValue: Math.max(0, life.businessValue - stats.dealValue + Math.max(0, Math.floor(profit * 0.25))),
+          businessRisk: clamp(life.businessRisk + (profit >= 0 ? -8 : 12)),
+          reputation: clamp(life.reputation + (profit >= 50000 ? 3 : profit < 0 ? -2 : 1)),
+          popupMessage: profit >= 0
+            ? `Flip sold for ${formatMoney(salePrice)}. Profit around ${formatMoney(profit)}.`
+            : `Bad flip. Sold for ${formatMoney(salePrice)}, losing around ${formatMoney(Math.abs(profit))}.`,
+          yearNotes: addYearNote(life, profit >= 0 ? `Real Estate flip profit ${formatMoney(profit)}.` : `Real Estate flip loss ${formatMoney(Math.abs(profit))}.`),
+        },
+        {
+          ownedProject: 0,
+          dealPrice: 0,
+          dealValue: 0,
+          dealCondition: 0,
+          dealRisk: 0,
+          dealRent: 0,
+          renovationProgress: 0,
+          rentalUnits: stats.rentalUnits,
+          rentedUnits: stats.rentedUnits,
+          flipProfit: stats.flipProfit + profit,
+        }
+      )
+    ),
+    18
+  );
+}
+
+export function realEstateHireManager(life: LifeStats) {
+  const blockedRealEstate = requireRealEstateCompany(life);
+  if (blockedRealEstate) return blockedRealEstate;
+
+  const blocked = noActions(life, 10);
+  if (blocked) return blocked;
+
+  const stats = getRealEstateStats(life);
+  const cost = 5000;
+
+  if (stats.companyCash < cost) {
+    return {
+      ...life,
+      popupMessage: `Your deal fund needs ${formatMoney(cost)} to hire a property manager.`,
+      yearNotes: addYearNote(life, "Not enough Real Estate fund to hire manager."),
+    };
+  }
+
+  return consumeAction(
+    normalizeBusiness(
+      updateRealEstateStats(
+        {
+          ...life,
+          businessManagement: clamp(life.businessManagement + randomBetween(6, 14)),
+          businessRisk: clamp(life.businessRisk - randomBetween(5, 12)),
+          popupMessage: `Hired a property manager. Management improved and risk dropped.`,
+          yearNotes: addYearNote(life, "Real Estate manager hired."),
+        },
+        {
+          companyCash: stats.companyCash - cost,
+          managerQuality: clamp(stats.managerQuality + randomBetween(12, 25)),
+        }
+      )
+    ),
+    10
+  );
+}
+
 export function seekInvestor(life: LifeStats) {
   const blocked = noActions(life);
   if (blocked) return blocked;
@@ -2865,6 +4224,12 @@ function processRentalEvents(life: LifeStats): LifeStats {
   let happiness = life.happiness;
   let reputation = life.reputation;
   let eventLog = life.eventLog;
+  const rentalNotes: string[] = [];
+
+  function addRentalNotice(message: string) {
+    rentalNotes.push(message);
+    eventLog = addLog({ ...life, eventLog }, `Rental Update: ${message}`);
+  }
 
   const ownedHomes = life.ownedHomes.map((home) => {
     if (!home.rentedOut) return home;
@@ -2926,28 +4291,28 @@ function processRentalEvents(life: LifeStats): LifeStats {
       const received = Math.max(0, rent - managerFee);
       cash += received;
       updatedHome.lastRentalEvent = "paid";
-      updatedHome.lastRentalEventMessage = `${home.tenantName} paid rent. You received ${formatMoney(received)}.`;
-      eventLog = addLog(life, `Rental Event: ${updatedHome.lastRentalEventMessage}`);
+      updatedHome.lastRentalEventMessage = `${home.tenantName} paid rent for ${home.name}. You received ${formatMoney(received)}.`;
+      addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     } else if (managerEnabled && randomBetween(1, 100) <= 45) {
       const recovered = Math.floor(Math.max(0, rent - managerFee) * 0.75);
       cash += recovered;
       updatedHome.lastRentalEvent = "manager_saved_problem";
-      updatedHome.lastRentalEventMessage = `Your property manager handled a missed rent problem. You recovered ${formatMoney(recovered)}.`;
-      eventLog = addLog(life, `Rental Event: ${updatedHome.lastRentalEventMessage}`);
+      updatedHome.lastRentalEventMessage = `Your property manager handled ${home.name}. You recovered ${formatMoney(recovered)}.`;
+      addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     } else {
       happiness = clamp(happiness - 2);
       reputation = clamp(reputation - 1);
       updatedHome.lastRentalEvent = "missed_payment";
-      updatedHome.lastRentalEventMessage = `${home.tenantName} missed rent.`;
-      eventLog = addLog(life, `Rental Event: ${updatedHome.lastRentalEventMessage}`);
+      updatedHome.lastRentalEventMessage = `${home.tenantName} missed rent for ${home.name}.`;
+      addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     }
 
     if (randomBetween(1, 100) <= Math.max(1, damageChance - managerProtection)) {
       updatedHome.condition = degradeCondition(updatedHome.condition);
       happiness = clamp(happiness - 2);
       updatedHome.lastRentalEvent = "damage";
-      updatedHome.lastRentalEventMessage = `${home.tenantName} damaged the property. Condition dropped to ${updatedHome.condition}.`;
-      eventLog = addLog(life, `Rental Event: ${updatedHome.lastRentalEventMessage}`);
+      updatedHome.lastRentalEventMessage = `${home.tenantName} damaged ${home.name}. Condition dropped to ${updatedHome.condition}.`;
+      addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     }
 
     const yearsLeft = Math.max(0, (updatedHome.tenantYearsRemaining || 1) - 1);
@@ -2961,9 +4326,9 @@ function processRentalEvents(life: LifeStats): LifeStats {
         tenantQuality: undefined,
         tenantYearsRemaining: 0,
         lastRentalEvent: "move_out",
-        lastRentalEventMessage: `${home.tenantName} moved out. The property is now vacant.`,
+        lastRentalEventMessage: `${home.tenantName} moved out of ${home.name}. The property is now vacant.`,
       };
-      eventLog = addLog(life, `Rental Event: ${updatedHome.lastRentalEventMessage}`);
+      addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     } else {
       updatedHome.tenantYearsRemaining = yearsLeft;
     }
@@ -2978,6 +4343,10 @@ function processRentalEvents(life: LifeStats): LifeStats {
     reputation,
     ownedHomes,
     eventLog,
+    popupMessage:
+      rentalNotes.length > 0 && rentalNotes.some((note) => note.toLowerCase().includes("moved out"))
+        ? rentalNotes.find((note) => note.toLowerCase().includes("moved out")) || life.popupMessage
+        : life.popupMessage,
   };
 }
 
@@ -3365,8 +4734,11 @@ function checkDeath(life: LifeStats) {
   if (life.age >= 85) chance += 22;
   if (life.age >= 95) chance += 40;
 
-  if (life.difficulty === "Hard") chance += 1;
-  if (life.difficulty === "Brutal") chance += 3;
+  if (life.difficulty === "Easy") chance -= 2;
+  if (life.difficulty === "Hard") chance += 2;
+  if (life.difficulty === "Brutal") chance += 5;
+  if (life.stress >= 85) chance += 3;
+  if (life.happiness <= 15) chance += 2;
 
   if (randomBetween(1, 100) <= chance) {
     return {
@@ -3391,6 +4763,9 @@ export function endYear(life: LifeStats) {
   let updated: LifeStats = {
     ...before,
     age: before.age + 1,
+    energy: MAX_ENERGY,
+    actionsLeft: ACTIONS_PER_YEAR,
+    recoveryActionsUsed: {},
     hasAskedPromotionThisYear: false,
     popupMessage: null,
   };
@@ -3403,13 +4778,26 @@ export function endYear(life: LifeStats) {
   const businessIncome = Math.floor((grossBusinessIncome - businessPayroll) * ((updated.businessOwnership || 100) / 100));
 
   const yearlySalary = updated.jobId === "unemployed" ? 0 : Math.max(0, updated.salary || 0);
+  const yearlyJobExperience =
+    updated.jobId === "unemployed"
+      ? updated.jobExperience
+      : {
+          ...updated.jobExperience,
+          [updated.jobId]: (updated.jobExperience[updated.jobId] || 0) + 1,
+        };
   const partTimeIncome = getPartTimeIncome(updated);
   const rentalIncomeBeforeCosts = getRentalIncomeEstimate(updated);
 
   updated = {
     ...updated,
     cash: updated.cash + yearlySalary + businessIncome + partTimeIncome,
-    careerXp: updated.careerXp + (yearlySalary > 0 ? 12 : 0),
+    careerXp: updated.careerXp + (yearlySalary > 0 ? 18 : 0),
+    jobExperience: yearlyJobExperience,
+    yearsWorked: updated.yearsWorked + (yearlySalary > 0 ? 1 : 0),
+    eventLog:
+      yearlySalary > 0
+        ? addLog(updated, `Salary paid: ${formatMoney(yearlySalary)} from ${updated.job}. Job experience +1.`)
+        : updated.eventLog,
     businessPayroll,
     partTimeWorkUsedThisYear: false,
   };
@@ -3422,11 +4810,26 @@ export function endYear(life: LifeStats) {
   const jobStress = updated.jobId === "unemployed" ? -2 : 4;
   const partTimeStress = (updated.partTimeJobs || []).length * 2;
 
+  const difficultyStress =
+    updated.difficulty === "Easy"
+      ? -3
+      : updated.difficulty === "Hard"
+        ? 3
+        : updated.difficulty === "Brutal"
+          ? 6
+          : 0;
+  const backgroundSupport =
+    updated.background === "Stable Family" || updated.background === "Rich Family"
+      ? 2
+      : updated.background === "Struggling"
+        ? -2
+        : 0;
+
   updated = {
     ...updated,
-    happiness: clamp(updated.happiness + housingBonus.happiness),
+    happiness: clamp(updated.happiness + housingBonus.happiness + backgroundSupport),
     reputation: clamp(updated.reputation + housingBonus.reputation),
-    stress: clamp((updated.stress ?? 35) - 7 + housingBonus.stress + jobStress + partTimeStress),
+    stress: clamp((updated.stress ?? 35) - 7 + housingBonus.stress + jobStress + partTimeStress + difficultyStress),
   };
 
   if (updated.business !== "None") {
@@ -3440,15 +4843,14 @@ export function endYear(life: LifeStats) {
         businessType.revenuePotential
     );
 
+    const passiveRevenueAdjustment = isProductBusinessType(updated.businessTypeId)
+      ? Math.floor((strength - updated.businessRisk / 2) * 65) + randomBetween(-2500, 6000)
+      : Math.floor((strength - updated.businessRisk / 2) * 160) + randomBetween(-5000, 12000);
+
     updated = normalizeBusiness({
       ...updated,
       businessValue: Math.max(0, updated.businessValue + yearlyValueChange),
-      businessRevenue: Math.max(
-        0,
-        updated.businessRevenue +
-          Math.floor((strength - updated.businessRisk / 2) * 160) +
-          randomBetween(-5000, 12000)
-      ),
+      businessRevenue: Math.max(0, updated.businessRevenue + passiveRevenueAdjustment),
       businessRisk: clamp(
         updated.businessRisk +
           randomBetween(-4, 7) +
@@ -3460,27 +4862,10 @@ export function endYear(life: LifeStats) {
       ),
     });
 
-    if (randomBetween(1, 100) <= 28) {
-      const positive = randomBetween(1, 100) > updated.businessRisk;
+    updated = applyProductLifecycleYearlyUpdate(updated);
 
-      if (positive) {
-        const boost = randomBetween(8000, 45000) + Math.floor(strength * 350);
-        updated = normalizeBusiness({
-          ...updated,
-          businessValue: updated.businessValue + boost,
-          businessBrand: clamp((updated.businessBrand || 0) + randomBetween(2, 7)),
-          eventLog: addLog(updated, `Business Event: ${updated.business} got positive market attention. Value +${formatMoney(boost)}.`),
-        });
-      } else {
-        const hit = randomBetween(5000, 35000);
-        updated = normalizeBusiness({
-          ...updated,
-          businessValue: Math.max(0, updated.businessValue - hit),
-          businessRisk: clamp(updated.businessRisk + randomBetween(4, 12)),
-          eventLog: addLog(updated, `Business Event: ${updated.business} faced a setback. Value -${formatMoney(hit)}.`),
-        });
-      }
-    }
+    updated = applyBusinessTypeYearlyEvent(updated);
+    updated = addCompletedBusinessMilestones(updated);
   }
 
   if (updated.business !== "None" && updated.businessRisk >= 75) {

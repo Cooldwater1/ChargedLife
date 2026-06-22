@@ -35,6 +35,7 @@ export type ActiveTab =
   | "stats"
   | "career"
   | "economy"
+  | "business"
   | "actions"
   | "timeline";
 
@@ -44,6 +45,7 @@ export type ActionPage =
   | "selfImprovement"
   | "school"
   | "career"
+  | "oddJobs"
   | "apply"
   | "life"
   | "money"
@@ -227,6 +229,29 @@ export type OwnedBusiness = {
   management: number;
   payroll: number;
   ownership: number;
+  specialStats: Record<string, number>;
+  project: ProductProjectStatus | null;
+};
+
+export type ProductProjectPhase =
+  | "concept"
+  | "pre_production"
+  | "production"
+  | "post_production"
+  | "released";
+
+export type ProductProjectStatus = {
+  phase: ProductProjectPhase;
+  progress: number;
+  quality: number;
+  bugs: number;
+  hype: number;
+  updates: number;
+  releasedAge: number;
+  lastUpdatedAge: number;
+  launchScore: number;
+  activeUsers: number;
+  yearlyDecay: number;
 };
 
 export type StudentLoanStatus = "not_applied" | "approved" | "denied";
@@ -271,6 +296,7 @@ export type LifeStats = {
   luck: number;
   reputation: number;
   stress: number;
+  energy: number;
 
   cash: number;
   netWorth: number;
@@ -343,6 +369,7 @@ export type LifeStats = {
   lifetimeMilestones: string[];
 
   actionsLeft: number;
+  recoveryActionsUsed: Record<string, number>;
   yearNotes: string[];
   lastYearRecap: YearRecap | null;
 
@@ -419,6 +446,10 @@ export type LifeGrowthAction = {
   disciplineGain: number;
   reputationGain: number;
   cashCost: number;
+  energyChange: number;
+  stressChange: number;
+  maxUsesPerYear?: number;
+  isRecovery?: boolean;
 };
 
 export type SelfImprovementAction = LifeGrowthAction;

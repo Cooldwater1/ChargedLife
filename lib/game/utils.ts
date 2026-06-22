@@ -79,11 +79,11 @@ export function calculateNetWorth(life: LifeStats) {
 }
 
 export function addLog(life: LifeStats, message: string) {
-  return [message, ...(life.eventLog || [])].slice(0, 80);
+  return [message, ...(life.eventLog || [])].slice(0, 40);
 }
 
 export function addYearNote(life: LifeStats, message: string) {
-  return [message, ...(life.yearNotes || [])].slice(0, 10);
+  return [message, ...(life.yearNotes || [])].slice(0, 6);
 }
 
 export function getSkillName(skillId: SkillId | "none") {
