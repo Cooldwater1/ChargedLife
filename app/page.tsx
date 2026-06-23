@@ -300,7 +300,7 @@ const lifeGrowthCategories: {
 type AssetCategory = "overview" | "properties" | "vehicles" | "items";
 
 const GAME_STAGE_LABEL = "Pre-Alpha";
-const GAME_VERSION_LABEL = "v0.3.27";
+const GAME_VERSION_LABEL = "v0.3.28";
 
 function getPlayerLevelFromXp(totalXp: number) {
   return Math.max(1, Math.floor(Math.sqrt(Math.max(0, totalXp) / 90)) + 1);
@@ -2503,7 +2503,7 @@ function SettingsPage({
                 <BetaButton label="-Health" onClick={() => updateLife(betaAdjustStat(life, "health", -10))} />
                 <BetaButton label="+Happy" onClick={() => updateLife(betaAdjustStat(life, "happiness", 10))} />
                 <BetaButton label="-Stress" onClick={() => updateLife(betaAdjustStat(life, "stress", -10))} />
-                <BetaButton label="+Smarts" onClick={() => updateLife(betaAdjustStat(life, "smarts", 10))} />
+                <BetaButton label="+Intelligence" onClick={() => updateLife(betaAdjustStat(life, "intelligence", 10))} />
                 <BetaButton label="+Energy" onClick={() => updateLife(betaAdjustStat(life, "energy", 25))} />
               </div>
             </BetaToolCard>

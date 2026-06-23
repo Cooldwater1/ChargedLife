@@ -5766,14 +5766,20 @@ export function betaSetAge(life: LifeStats, age: number): LifeStats {
 }
 
 export function betaAddXP(life: LifeStats, amount: number): LifeStats {
-  return addPlayerXp(
-    {
-      ...life,
-      popupMessage: `Beta tool: added ${amount} XP.`,
-      yearNotes: addYearNote(life, `Beta tool added ${amount} XP.`),
-    },
-    amount,
-  );
+  const safeAmount = Math.max(0, Math.round(amount));
+  const nextLifetimeXp = (life.lifetimeXp || life.playerXp || 0) + safeAmount;
+  const nextLevel = getLevelFromXp(nextLifetimeXp);
+  const currentLevel = life.playerLevel || getLevelFromXp(life.lifetimeXp || life.playerXp || 0);
+  const levelMessage = nextLevel > currentLevel ? ` You reached Level ${nextLevel}.` : "";
+
+  return {
+    ...life,
+    playerLevel: nextLevel,
+    playerXp: nextLifetimeXp,
+    lifetimeXp: nextLifetimeXp,
+    popupMessage: `Beta tool: added ${safeAmount} XP.${levelMessage}`,
+    yearNotes: addYearNote(life, `Beta tool added ${safeAmount} XP.${levelMessage}`),
+  };
 }
 
 export function betaClearDebt(life: LifeStats): LifeStats {
@@ -5789,7 +5795,7 @@ export function betaClearDebt(life: LifeStats): LifeStats {
 
 export function betaAdjustStat(
   life: LifeStats,
-  stat: "health" | "happiness" | "smarts" | "looks" | "stress" | "energy",
+  stat: "health" | "happiness" | "intelligence" | "charisma" | "discipline" | "stress" | "energy",
   amount: number,
 ): LifeStats {
   const current = Number(life[stat] || 0);
