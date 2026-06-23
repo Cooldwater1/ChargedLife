@@ -1435,7 +1435,9 @@ export function getRentalIncomeEstimate(life: LifeStats) {
 
 export function getEconomyBreakdown(life: LifeStats): EconomyBreakdown {
   const workPayPerClick = getWorkPayPerClick(life);
-  const possibleWorkIncomePerYear = workPayPerClick * ACTIONS_PER_YEAR;
+  const currentJob = getJobById(life.jobId);
+  const possibleWorkIncomePerYear =
+    life.jobId === "unemployed" ? 0 : Math.max(0, life.salary || currentJob?.salary || 0);
 
   const businessIncomeEstimate = getBusinessIncomeEstimate(life);
   const rentalIncomeEstimate = getRentalIncomeEstimate(life);
@@ -3461,12 +3463,20 @@ export function trainEmployees(life: LifeStats) {
   const blocked = noActions(life);
   if (blocked) return blocked;
 
-  if (life.business === "None" || life.businessEmployees <= 0) {
+  if (life.business === "None") {
     return {
       ...life,
-      popupMessage: "You need employees before training the team.",
-      yearNotes: addYearNote(life, "You need employees before training the team."),
+      popupMessage: "You need a business before training the team.",
+      yearNotes: addYearNote(life, "You need a business before training the team."),
     };
+  }
+
+  if (life.businessEmployees <= 0) {
+    return businessSmallProgress(
+      life,
+      "You do not have employees yet, so you documented training material and cleaned up the company instead. Management +1, brand +1, risk -1.",
+      "Prepared training material before hiring employees."
+    );
   }
 
   const cost = life.businessEmployees * 2500;
@@ -3740,6 +3750,42 @@ function requireRealEstateCompany(life: LifeStats) {
   };
 }
 
+function realEstateSmallProgress(life: LifeStats, message: string, note: string, energyCost = 8) {
+  const blocked = noActions(life, energyCost);
+  if (blocked) return blocked;
+
+  return consumeAction(
+    normalizeBusiness({
+      ...life,
+      businessManagement: clamp((life.businessManagement || 0) + 1),
+      businessBrand: clamp((life.businessBrand || 0) + 1),
+      businessRisk: clamp((life.businessRisk || 0) - 1),
+      stress: changeStress(life, 1),
+      popupMessage: message,
+      yearNotes: addYearNote(life, note),
+    }),
+    energyCost
+  );
+}
+
+function businessSmallProgress(life: LifeStats, message: string, note: string, energyCost = 6) {
+  const blocked = noActions(life, energyCost);
+  if (blocked) return blocked;
+
+  return consumeAction(
+    normalizeBusiness({
+      ...life,
+      businessManagement: clamp((life.businessManagement || 0) + 1),
+      businessBrand: clamp((life.businessBrand || 0) + 1),
+      businessRisk: clamp((life.businessRisk || 0) - 1),
+      stress: changeStress(life, 1),
+      popupMessage: message,
+      yearNotes: addYearNote(life, note),
+    }),
+    energyCost
+  );
+}
+
 export function realEstateAddFunds(life: LifeStats, amount: number) {
   const blocked = requireRealEstateCompany(life);
   if (blocked) return blocked;
@@ -3834,19 +3880,19 @@ export function realEstateBuyDeal(life: LifeStats) {
   const stats = getRealEstateStats(life);
 
   if (!stats.currentDeal) {
-    return {
-      ...life,
-      popupMessage: "Find a property deal first.",
-      yearNotes: addYearNote(life, "Find a property deal before buying."),
-    };
+    return realEstateSmallProgress(
+      life,
+      "No active deal was found, so you contacted brokers and prepared your buying process instead. Management +1, brand +1, risk -1. Use Find Property Deal next.",
+      "Prepared Real Estate buying process before finding a deal."
+    );
   }
 
   if (stats.companyCash < stats.dealPrice) {
-    return {
-      ...life,
-      popupMessage: `Your deal fund needs ${formatMoney(stats.dealPrice)} to buy this property. Add funds first.`,
-      yearNotes: addYearNote(life, "Real Estate deal fund is too low to buy the deal."),
-    };
+    return realEstateSmallProgress(
+      life,
+      `Your deal fund needs ${formatMoney(stats.dealPrice)} to buy this property. You could not buy it yet, but you negotiated with the seller and improved your deal pipeline. Management +1, brand +1, risk -1.`,
+      "Negotiated a Real Estate deal but the fund was too low."
+    );
   }
 
   return consumeAction(
@@ -3883,21 +3929,21 @@ export function realEstateRenovate(life: LifeStats) {
   const stats = getRealEstateStats(life);
 
   if (!stats.ownedProject) {
-    return {
-      ...life,
-      popupMessage: "Buy a property deal before renovating.",
-      yearNotes: addYearNote(life, "No Real Estate project to renovate."),
-    };
+    return realEstateSmallProgress(
+      life,
+      "You do not own a project yet, so you planned renovation budgets and contacted contractors instead. Management +1, brand +1, risk -1.",
+      "Prepared Real Estate renovation plans before owning a project."
+    );
   }
 
   const cost = randomBetween(6000, 18000);
 
   if (stats.companyCash < cost) {
-    return {
-      ...life,
-      popupMessage: `Your deal fund needs ${formatMoney(cost)} for this renovation.`,
-      yearNotes: addYearNote(life, "Real Estate fund too low for renovation."),
-    };
+    return realEstateSmallProgress(
+      life,
+      `Your deal fund needs ${formatMoney(cost)} for this renovation. You could not renovate yet, but you gathered quotes and reduced project risk. Management +1, brand +1, risk -1.`,
+      "Real Estate fund too low for renovation, so quotes were gathered instead."
+    );
   }
 
   const progress = randomBetween(12, 28);
@@ -3939,11 +3985,11 @@ export function realEstateRentProject(life: LifeStats) {
   const stats = getRealEstateStats(life);
 
   if (!stats.ownedProject) {
-    return {
-      ...life,
-      popupMessage: "Buy a property before renting it out.",
-      yearNotes: addYearNote(life, "No Real Estate project to rent out."),
-    };
+    return realEstateSmallProgress(
+      life,
+      "You do not own a property yet, so you built a tenant waiting list and contacted local agents instead. Management +1, brand +1, risk -1.",
+      "Built Real Estate tenant pipeline before owning a property."
+    );
   }
 
   const unitChance = stats.dealCondition + stats.renovationProgress + Math.floor(life.businessManagement / 2) + Math.floor(life.luck / 3) - stats.dealRisk;
@@ -3983,11 +4029,11 @@ export function realEstateFlipProject(life: LifeStats) {
   const stats = getRealEstateStats(life);
 
   if (!stats.ownedProject) {
-    return {
-      ...life,
-      popupMessage: "Buy a property before trying to flip.",
-      yearNotes: addYearNote(life, "No Real Estate project to flip."),
-    };
+    return realEstateSmallProgress(
+      life,
+      "You do not own a property to flip yet, so you studied comparable sales and improved your flipping process instead. Management +1, brand +1, risk -1.",
+      "Studied comparable Real Estate sales before owning a project."
+    );
   }
 
   const sellScore =
@@ -4045,11 +4091,11 @@ export function realEstateHireManager(life: LifeStats) {
   const cost = 5000;
 
   if (stats.companyCash < cost) {
-    return {
-      ...life,
-      popupMessage: `Your deal fund needs ${formatMoney(cost)} to hire a property manager.`,
-      yearNotes: addYearNote(life, "Not enough Real Estate fund to hire manager."),
-    };
+    return realEstateSmallProgress(
+      life,
+      `Your deal fund needs ${formatMoney(cost)} to hire a property manager. You could not hire yet, but you interviewed candidates and improved your management process. Management +1, brand +1, risk -1.`,
+      "Interviewed Real Estate manager candidates, but the fund was too low."
+    );
   }
 
   return consumeAction(
@@ -4777,7 +4823,18 @@ export function endYear(life: LifeStats) {
   const businessPayroll = getBusinessPayroll(updated);
   const businessIncome = Math.floor((grossBusinessIncome - businessPayroll) * ((updated.businessOwnership || 100) / 100));
 
-  const yearlySalary = updated.jobId === "unemployed" ? 0 : Math.max(0, updated.salary || 0);
+  const currentJob = getJobById(updated.jobId);
+  const normalizedSalary =
+    updated.jobId === "unemployed" ? 0 : Math.max(0, updated.salary || currentJob?.salary || 0);
+
+  updated = {
+    ...updated,
+    job: currentJob?.title || updated.job,
+    jobTrack: currentJob?.track || updated.jobTrack,
+    salary: normalizedSalary,
+  };
+
+  const yearlySalary = normalizedSalary;
   const yearlyJobExperience =
     updated.jobId === "unemployed"
       ? updated.jobExperience

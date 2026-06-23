@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import type { ReactNode } from "react";
+import type { FormEvent, ReactNode } from "react";
 import {
   ACTIONS_PER_YEAR,
   MAX_ENERGY,
@@ -155,6 +155,8 @@ import {
 const MAX_SAVED_EVENTS = 40;
 const MAX_SAVED_YEAR_NOTES = 6;
 const MAX_SAVED_MILESTONES = 25;
+const PRE_ALPHA_PASSWORD = "Kazeb";
+const PRE_ALPHA_ACCESS_KEY = "chargedlife-pre-alpha-access";
 
 const jobCategories: { id: JobCategory; label: string; description: string }[] =
   [
@@ -285,13 +287,20 @@ const GAME_STAGE_LABEL = "Pre-Alpha";
 const GAME_VERSION_LABEL = "v0.3.0";
 
 function normalizeLife(savedLife: LifeStats): LifeStats {
+  const normalizedJobId = savedLife.jobId || "unemployed";
+  const savedJob = jobs.find((job) => job.id === normalizedJobId) || null;
+  const normalizedSalary =
+    normalizedJobId === "unemployed"
+      ? 0
+      : Math.max(0, savedLife.salary || savedJob?.salary || 0);
+
   return {
     ...savedLife,
 
-    jobId: savedLife.jobId || "unemployed",
-    job: savedLife.job || "Unemployed",
-    jobTrack: savedLife.jobTrack || "none",
-    salary: savedLife.salary || 0,
+    jobId: normalizedJobId,
+    job: savedJob?.title || savedLife.job || "Unemployed",
+    jobTrack: savedJob?.track || savedLife.jobTrack || "none",
+    salary: normalizedSalary,
     careerLevel: savedLife.careerLevel || 0,
     careerXp: savedLife.careerXp || 0,
     jobExperience: savedLife.jobExperience || {},
@@ -492,6 +501,18 @@ export default function Home() {
     useState<SchoolCategory | null>(null);
   const [selectedAssetCategory, setSelectedAssetCategory] =
     useState<AssetCategory>("overview");
+  const [hasPreAlphaAccess, setHasPreAlphaAccess] = useState(false);
+  const [passwordInput, setPasswordInput] = useState("");
+  const [passwordError, setPasswordError] = useState("");
+
+
+  useEffect(() => {
+    const savedAccess = window.localStorage.getItem(PRE_ALPHA_ACCESS_KEY);
+
+    if (savedAccess === "true") {
+      setHasPreAlphaAccess(true);
+    }
+  }, []);
 
   useEffect(() => {
     const saved = window.localStorage.getItem(STORAGE_KEY);
@@ -533,6 +554,21 @@ export default function Home() {
     if (!life) return null;
     return getEconomyBreakdown(life);
   }, [life]);
+
+
+  function handlePasswordSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    if (passwordInput.trim() !== PRE_ALPHA_PASSWORD) {
+      setPasswordError("Wrong password. This pre-alpha is currently private.");
+      return;
+    }
+
+    window.localStorage.setItem(PRE_ALPHA_ACCESS_KEY, "true");
+    setHasPreAlphaAccess(true);
+    setPasswordError("");
+    setPasswordInput("");
+  }
 
   function handleTabChange(tab: ActiveTab) {
     if (tab === "actions") {
@@ -613,6 +649,18 @@ export default function Home() {
     if (!life) return;
 
     updateLife(dismissPopup(life));
+  }
+
+
+  if (!hasPreAlphaAccess) {
+    return (
+      <PreAlphaPasswordGate
+        passwordInput={passwordInput}
+        passwordError={passwordError}
+        setPasswordInput={setPasswordInput}
+        onSubmit={handlePasswordSubmit}
+      />
+    );
   }
 
   if (!life) {
@@ -6489,6 +6537,78 @@ function ActionButton({
         {description}
       </span>
     </button>
+  );
+}
+
+
+function PreAlphaPasswordGate({
+  passwordInput,
+  passwordError,
+  setPasswordInput,
+  onSubmit,
+}: {
+  passwordInput: string;
+  passwordError: string;
+  setPasswordInput: (value: string) => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+}) {
+  return (
+    <main className="min-h-screen bg-[radial-gradient(circle_at_top,rgba(249,115,22,0.22),transparent_34%),linear-gradient(180deg,#09090b,#18181b)] px-4 py-8 text-white sm:px-6 lg:px-8">
+      <div className="mx-auto flex min-h-[calc(100vh-4rem)] w-full max-w-md items-center justify-center">
+        <section className="w-full rounded-[2rem] border border-orange-500/25 bg-zinc-950/90 p-6 shadow-2xl shadow-black/50 backdrop-blur-xl sm:p-7">
+          <div className="text-center">
+            <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl border border-orange-400/30 bg-orange-500/10 text-2xl">
+              ⚡
+            </div>
+            <p className="mt-5 text-xs font-black uppercase tracking-[0.24em] text-orange-400">
+              ChargedLife Pre-Alpha
+            </p>
+            <h1 className="mt-2 text-3xl font-black tracking-tight text-white">
+              Private Access
+            </h1>
+            <p className="mt-3 text-sm leading-6 text-zinc-400">
+              The game is not public yet. Enter the access password to continue testing.
+            </p>
+          </div>
+
+          <form onSubmit={onSubmit} className="mt-6 space-y-4">
+            <div>
+              <label
+                htmlFor="pre-alpha-password"
+                className="text-xs font-black uppercase tracking-[0.18em] text-zinc-500"
+              >
+                Password
+              </label>
+              <input
+                id="pre-alpha-password"
+                type="password"
+                value={passwordInput}
+                onChange={(event) => setPasswordInput(event.target.value)}
+                placeholder="Enter password"
+                autoComplete="off"
+                className="mt-2 w-full rounded-2xl border border-zinc-800 bg-zinc-900 px-4 py-3 text-base font-bold text-white outline-none transition placeholder:text-zinc-600 focus:border-orange-400 focus:ring-4 focus:ring-orange-500/10"
+              />
+              {passwordError && (
+                <p className="mt-2 rounded-2xl border border-red-500/25 bg-red-500/10 px-4 py-3 text-sm font-bold text-red-300">
+                  {passwordError}
+                </p>
+              )}
+            </div>
+
+            <button
+              type="submit"
+              className="w-full rounded-2xl bg-orange-500 px-5 py-3 text-sm font-black text-black transition hover:bg-orange-400 active:scale-[0.98]"
+            >
+              Enter Game
+            </button>
+          </form>
+
+          <p className="mt-5 text-center text-xs font-bold leading-5 text-zinc-500">
+            Access is saved on this device after the correct password is entered.
+          </p>
+        </section>
+      </div>
+    </main>
   );
 }
 
