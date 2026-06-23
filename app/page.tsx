@@ -300,7 +300,7 @@ const lifeGrowthCategories: {
 type AssetCategory = "overview" | "properties" | "vehicles" | "items";
 
 const GAME_STAGE_LABEL = "Pre-Alpha";
-const GAME_VERSION_LABEL = "v0.3.26";
+const GAME_VERSION_LABEL = "v0.3.27";
 
 function getPlayerLevelFromXp(totalXp: number) {
   return Math.max(1, Math.floor(Math.sqrt(Math.max(0, totalXp) / 90)) + 1);
