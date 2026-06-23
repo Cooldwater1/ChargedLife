@@ -1,4 +1,4 @@
-import { ACTIONS_PER_YEAR, MAX_ENERGY, MIN_ACTION_ENERGY, jobs } from "./data";
+import { MAX_ENERGY, MIN_ACTION_ENERGY, jobs } from "./data";
 import type {
   AssetCondition,
   BusinessType,
@@ -32,6 +32,32 @@ import {
 } from "./utils";
 import { getJobMissingRequirements } from "./requirements";
 
+export const MONTH_NAMES = [
+  "January",
+  "February",
+  "March",
+  "April",
+  "May",
+  "June",
+  "July",
+  "August",
+  "September",
+  "October",
+  "November",
+  "December",
+];
+
+const MONTHS_PER_YEAR = 12;
+
+function monthlyAmount(annualAmount: number) {
+  return Math.floor(Math.max(0, annualAmount || 0) / MONTHS_PER_YEAR);
+}
+
+export function getMonthName(month: number) {
+  const safeMonth = Math.max(1, Math.min(12, Math.floor(month || 1)));
+  return MONTH_NAMES[safeMonth - 1];
+}
+
 export const housingOptions: HousingOption[] = [
   {
     id: "studio-apartment",
@@ -39,7 +65,7 @@ export const housingOptions: HousingOption[] = [
     yearlyCost: 6000,
     happinessBonus: 3,
     reputationBonus: 0,
-    description: "Cheap starter housing. Adds yearly rent.",
+    description: "Cheap starter housing. Adds monthly rent.",
   },
   {
     id: "small-rental-house",
@@ -258,7 +284,63 @@ function createMarketAsset(
       enabled: false,
       feePercent: 0,
     },
-    lastServicedAge: 18,
+    lastServicedAge: 0,
+  };
+}
+
+function getUniqueBusinesses(life: LifeStats): OwnedBusiness[] {
+  const map = new Map<string, OwnedBusiness>();
+
+  for (const business of life.businesses || []) {
+    if (business?.id) map.set(business.id, business);
+  }
+
+  if (life.business !== "None") {
+    const activeId = life.activeBusinessId || `active-${life.businessTypeId || "business"}`;
+    const existing = map.get(activeId);
+
+    map.set(activeId, {
+      id: activeId,
+      typeId: life.businessTypeId || existing?.typeId || "online-store",
+      name: life.business || existing?.name || "Business",
+      value: Math.max(life.businessValue || 0, existing?.value || 0),
+      stage: Math.max(life.businessStage || 0, existing?.stage || 0),
+      employees: Math.max(life.businessEmployees || 0, existing?.employees || 0),
+      revenue: Math.max(life.businessRevenue || 0, existing?.revenue || 0),
+      risk: life.businessRisk ?? existing?.risk ?? 0,
+      productQuality: life.businessProductQuality ?? existing?.productQuality ?? 0,
+      brand: life.businessBrand ?? existing?.brand ?? 0,
+      management: life.businessManagement ?? existing?.management ?? 0,
+      payroll: Math.max(life.businessPayroll || 0, existing?.payroll || 0),
+      ownership: life.businessOwnership || existing?.ownership || 100,
+      specialStats: { ...(existing?.specialStats || {}) },
+      project: existing?.project || null,
+    });
+  }
+
+  return Array.from(map.values());
+}
+
+export function getBusinessPortfolioValue(life: LifeStats) {
+  return getUniqueBusinesses(life).reduce((total, business) => total + Math.max(0, business.value || 0), 0);
+}
+
+function getBusinessManagerLevel(business: OwnedBusiness | null | undefined) {
+  return Math.max(0, Math.floor(business?.specialStats?.businessManagerLevel || 0));
+}
+
+export function getHoldingCompanyPower(life: LifeStats) {
+  const level = Math.max(0, life.holdingCompanyLevel || 0);
+  const managers = Math.max(0, life.holdingCompanyManagers || 0);
+  const automation = Math.max(0, life.holdingCompanyAutomation || 0);
+
+  return {
+    level,
+    managers,
+    automation,
+    monthlyCost: life.holdingCompanyMonthlyCost || 0,
+    active: level > 0,
+    efficiency: Math.min(75, level * 10 + managers * 7 + Math.floor(automation / 2)),
   };
 }
 
@@ -266,7 +348,7 @@ function recalc(life: LifeStats): LifeStats {
   return {
     ...life,
     netWorth:
-      life.cash + getAssetValue(life) + life.businessValue - Math.max(0, life.debt),
+      life.cash + getAssetValue(life) + getBusinessPortfolioValue(life) - Math.max(0, life.debt),
   };
 }
 
@@ -290,7 +372,7 @@ function consumeAction(life: LifeStats, energyCost = 15): LifeStats {
   return recalc({
     ...life,
     energy: clamp((life.energy ?? MAX_ENERGY) - cost, 0, MAX_ENERGY),
-    actionsLeft: Math.max(0, life.actionsLeft - 1),
+    actionsLeft: 0,
   });
 }
 
@@ -299,11 +381,11 @@ function noActions(life: LifeStats, energyCost = MIN_ACTION_ENERGY): LifeStats |
 
   if ((life.energy ?? MAX_ENERGY) >= cost) return null;
 
-  const note = `Too low on energy. Recover in Life & Growth or age up when ready.`;
+  const note = `Too low on energy. Recover in Life & Growth or go to next month when ready.`;
 
   return {
     ...life,
-    popupMessage: `You are too low on energy. Recover energy in Life & Growth or age up when ready.`,
+    popupMessage: `You are too low on energy. Recover energy in Life & Growth or go to next month when ready.`,
     yearNotes: (life.yearNotes || []).includes(note)
       ? life.yearNotes
       : addYearNote(life, note),
@@ -311,7 +393,7 @@ function noActions(life: LifeStats, energyCost = MIN_ACTION_ENERGY): LifeStats |
 }
 
 export function getActionsUsed(life: LifeStats) {
-  return Math.max(0, ACTIONS_PER_YEAR - life.actionsLeft);
+  return Math.max(0, life.monthsLived || 0);
 }
 
 export function getEnergyStatus(life: LifeStats) {
@@ -1118,7 +1200,7 @@ export function doProductLifecycleAction(life: LifeStats, actionId: string) {
     nextProject = {
       ...nextProject,
       updates: nextProject.updates + 1,
-      lastUpdatedAge: life.age,
+      lastUpdatedAge: life.monthsLived || 0,
       hype: clamp(nextProject.hype + randomBetween(6, 16)),
       quality: clamp(nextProject.quality + randomBetween(2, 7)),
       bugs: clamp(nextProject.bugs + randomBetween(-8, 5)),
@@ -1175,8 +1257,8 @@ export function doProductLifecycleAction(life: LifeStats, actionId: string) {
     nextProject = {
       ...nextProject,
       phase: "released",
-      releasedAge: life.age,
-      lastUpdatedAge: life.age,
+      releasedAge: life.monthsLived || 0,
+      lastUpdatedAge: life.monthsLived || 0,
       launchScore: normalizedScore,
       activeUsers: clamp(Math.floor(normalizedScore / 1.5)),
       yearlyDecay: normalizedScore >= 90 ? 6 : normalizedScore >= 70 ? 12 : 22,
@@ -1229,7 +1311,8 @@ function applyProductLifecycleYearlyUpdate(life: LifeStats): LifeStats {
   const project = getProjectFromLife(life);
   if (!project || project.phase !== "released") return life;
 
-  const yearsSinceUpdate = project.lastUpdatedAge > 0 ? Math.max(0, life.age - project.lastUpdatedAge) : 0;
+  const monthsSinceUpdate = project.lastUpdatedAge > 0 ? Math.max(0, (life.monthsLived || 0) - project.lastUpdatedAge) : 0;
+  const yearsSinceUpdate = Math.floor(monthsSinceUpdate / 12);
   const decay = Math.min(65, project.yearlyDecay + yearsSinceUpdate * 6);
   const retainedRevenue = Math.max(0.35, 1 - decay / 100);
   const revenueLoss = Math.floor(life.businessRevenue * (1 - retainedRevenue));
@@ -1389,26 +1472,42 @@ export function getAssetValue(life: LifeStats) {
 }
 
 export function getAssetUpkeep(life: LifeStats) {
-  return [...(life.ownedCars || []), ...(life.ownedHomes || []), ...(life.ownedItems || [])].reduce(
+  const annualUpkeep = [...(life.ownedCars || []), ...(life.ownedHomes || []), ...(life.ownedItems || [])].reduce(
     (total, asset) => total + asset.upkeep,
     0
   );
+
+  return monthlyAmount(annualUpkeep);
 }
 
 export function getHousingCost(life: LifeStats) {
-  return life.currentHousing?.yearlyCost || 0;
+  return monthlyAmount(life.currentHousing?.yearlyCost || 0);
 }
 
 export function getDebtInterest(life: LifeStats) {
-  return life.debt > 0 ? Math.floor(life.debt * 0.06) : 0;
+  return life.debt > 0 ? Math.floor(life.debt * 0.005) : 0;
 }
 
 export function getWorkPayPerClick(life: LifeStats) {
-  return life.salary > 0 ? Math.floor(life.salary / ACTIONS_PER_YEAR) : 2500;
+  return life.salary > 0 ? monthlyAmount(life.salary) : 0;
 }
 
 export function getBusinessIncomeEstimate(life: LifeStats) {
-  return life.business === "None" ? 0 : Math.floor(life.businessRevenue * 0.22);
+  const businesses = getUniqueBusinesses(life);
+  if (businesses.length === 0) return 0;
+
+  const holding = getHoldingCompanyPower(life);
+
+  return businesses.reduce((total, business) => {
+    const managerLevel = getBusinessManagerLevel(business);
+    const managerBoost = 1 + managerLevel * 0.04 + holding.efficiency * 0.002;
+    const managerCost = managerLevel > 0 ? 900 + managerLevel * 650 : 0;
+    const payrollCost = monthlyAmount(business.payroll || 0);
+    const ownership = (business.ownership || 100) / 100;
+    const gross = Math.floor(monthlyAmount(Math.floor((business.revenue || 0) * 0.22)) * managerBoost * ownership);
+
+    return total + Math.max(0, gross - payrollCost - managerCost);
+  }, 0) - (holding.active ? holding.monthlyCost : 0);
 }
 
 export function getPropertyManagerFees(life: LifeStats) {
@@ -1416,7 +1515,7 @@ export function getPropertyManagerFees(life: LifeStats) {
     if (!home.rentedOut || home.rentalStatus !== "Occupied") return total;
     if (!home.propertyManager?.enabled) return total;
 
-    return total + Math.floor(getAdjustedRentIncome(home) * ((home.propertyManager.feePercent || 10) / 100));
+    return total + Math.floor(monthlyAmount(getAdjustedRentIncome(home)) * ((home.propertyManager.feePercent || 10) / 100));
   }, 0);
 }
 
@@ -1424,7 +1523,7 @@ export function getRentalIncomeEstimate(life: LifeStats) {
   return (life.ownedHomes || []).reduce((total, home) => {
     if (!home.rentedOut || home.rentalStatus !== "Occupied") return total;
 
-    const rent = getAdjustedRentIncome(home);
+    const rent = monthlyAmount(getAdjustedRentIncome(home));
     const fee = home.propertyManager?.enabled
       ? Math.floor(rent * ((home.propertyManager.feePercent || 10) / 100))
       : 0;
@@ -1464,6 +1563,7 @@ export function getEconomyBreakdown(life: LifeStats): EconomyBreakdown {
   return {
     workPayPerClick,
     possibleWorkIncomePerYear,
+    monthlySalary: monthlyAmount(possibleWorkIncomePerYear),
     businessIncomeEstimate,
     rentalIncomeEstimate,
     totalPassiveIncome,
@@ -1475,7 +1575,8 @@ export function getEconomyBreakdown(life: LifeStats): EconomyBreakdown {
     totalAssets,
     totalCarValue,
     totalHomeValue,
-    netPassiveYear: totalPassiveIncome - totalExpenses,
+    netPassiveYear: (totalPassiveIncome - totalExpenses) * 12,
+    netPassiveMonth: totalPassiveIncome - totalExpenses,
     occupiedRentals,
     vacantRentals,
   };
@@ -1501,6 +1602,98 @@ export function canApplyForJob(life: LifeStats, job: Job) {
     life.discipline >= job.requiredDiscipline &&
     life.reputation >= job.requiredReputation
   );
+}
+
+function getLevelFromXp(totalXp: number) {
+  return Math.max(1, Math.floor(Math.sqrt(Math.max(0, totalXp) / 90)) + 1);
+}
+
+function getMonthlyXpGain(input: {
+  monthlyNet: number;
+  monthlySalary: number;
+  businessIncome: number;
+  partTimeIncome: number;
+  rentalIncome: number;
+  goalsCompleted: number;
+  hadLifeEvent: boolean;
+}) {
+  let xp = 12;
+
+  if (input.monthlyNet > 0) xp += 8;
+  if (input.monthlySalary > 0) xp += 5;
+  if (input.businessIncome > 0) xp += 6;
+  if (input.partTimeIncome > 0) xp += 3;
+  if (input.rentalIncome > 0) xp += 5;
+  if (input.hadLifeEvent) xp += 8;
+
+  xp += input.goalsCompleted * 18;
+
+  return Math.max(8, xp);
+}
+
+function addAchievementIfMissing(life: LifeStats, achievement: string) {
+  if ((life.lifetimeMilestones || []).includes(achievement)) return life;
+
+  return {
+    ...life,
+    lifetimeMilestones: addMilestone(life, achievement),
+    eventLog: addLog(life, `Achievement Unlocked: ${achievement}.`),
+  };
+}
+
+function applyGameAchievements(before: LifeStats, after: LifeStats) {
+  let updated = after;
+
+  if (before.monthsLived <= 0 && after.monthsLived >= 1) {
+    updated = addAchievementIfMissing(updated, "🏁 First Month Complete");
+  }
+
+  if (before.jobId === "unemployed" && after.jobId !== "unemployed") {
+    updated = addAchievementIfMissing(updated, "💼 First Paycheck Path");
+  }
+
+  if (before.debt > 0 && after.debt <= 0) {
+    updated = addAchievementIfMissing(updated, "💳 Debt Free");
+  }
+
+  if ((before.ownedCars || []).length + (before.ownedHomes || []).length + (before.ownedItems || []).length === 0 &&
+      (after.ownedCars || []).length + (after.ownedHomes || []).length + (after.ownedItems || []).length > 0) {
+    updated = addAchievementIfMissing(updated, "🏦 First Asset");
+  }
+
+  if (before.business === "None" && after.business !== "None") {
+    updated = addAchievementIfMissing(updated, "🏢 Business Owner");
+  }
+
+  if (before.netWorth < 10000 && after.netWorth >= 10000) {
+    updated = addAchievementIfMissing(updated, "💵 Five-Figure Net Worth");
+  }
+
+  if (before.netWorth < 100000 && after.netWorth >= 100000) {
+    updated = addAchievementIfMissing(updated, "👑 Six-Figure Net Worth");
+  }
+
+  if (before.netWorth < 1000000 && after.netWorth >= 1000000) {
+    updated = addAchievementIfMissing(updated, "🏆 Millionaire");
+  }
+
+  if ((before.completedDegrees || []).length === 0 && (after.completedDegrees || []).length > 0) {
+    updated = addAchievementIfMissing(updated, "🎓 First Degree");
+  }
+
+  if ((before.businesses || []).length < 3 && (after.businesses || []).length >= 3) {
+    updated = addAchievementIfMissing(updated, "🏢 Portfolio Owner");
+  }
+
+  if ((before.holdingCompanyLevel || 0) <= 0 && (after.holdingCompanyLevel || 0) > 0) {
+    updated = addAchievementIfMissing(updated, "🏛️ Holding Company");
+  }
+
+  if ((before.skills.realEstate || 0) < 5 && (after.skills.realEstate || 0) >= 5) {
+    updated = addAchievementIfMissing(updated, "🏘️ Property Operator");
+  }
+
+  return updated;
 }
 
 function addMilestone(life: LifeStats, milestone: string) {
@@ -1694,7 +1887,7 @@ export function applyStudentLoan(life: LifeStats) {
     }
 
     if (denialReasons.length === 0) {
-      denialReasons.push("the bank considered the application too risky this year");
+      denialReasons.push("the bank considered the application too risky this month");
     }
 
     const reasonText = denialReasons.join(", ");
@@ -1883,8 +2076,8 @@ export function doLifeGrowth(life: LifeStats, action: LifeGrowthAction) {
   if (action.isRecovery && action.maxUsesPerYear !== undefined && used >= action.maxUsesPerYear) {
     return {
       ...life,
-      popupMessage: `${action.name} has already been used ${action.maxUsesPerYear} time(s) this year.`,
-      yearNotes: addYearNote(life, `${action.name} is already used up this year.`),
+      popupMessage: `${action.name} has already been used ${action.maxUsesPerYear} time(s) this month.`,
+      yearNotes: addYearNote(life, `${action.name} is already used up this month.`),
     };
   }
 
@@ -1952,7 +2145,7 @@ export function applyForJob(life: LifeStats, job: Job) {
     happiness: clamp(life.happiness + randomBetween(2, 6)),
     reputation: clamp(life.reputation + randomBetween(2, 5)),
     lifetimeMilestones: addMilestone(life, `Hired as ${job.title}`),
-    popupMessage: `You got hired as ${job.title}. Salary: ${formatMoney(job.salary)}/year.`,
+    popupMessage: `You got hired as ${job.title}. Salary: ${formatMoney(Math.floor(job.salary / 12))}/month (${formatMoney(job.salary)}/year).`,
     yearNotes: addYearNote(life, `You got hired as ${job.title}.`),
   });
 }
@@ -1978,7 +2171,7 @@ export function work(life: LifeStats) {
     discipline: clamp(life.discipline + randomBetween(1, 3)),
     careerXp: life.careerXp + (life.jobId === "unemployed" ? 5 : randomBetween(18, 30)),
     jobExperience,
-    yearsWorked: life.yearsWorked + 1,
+    yearsWorked: life.yearsWorked + 1 / 12,
     yearNotes: addYearNote(life, `You worked and earned ${formatMoney(income)}.`),
   });
 }
@@ -2042,12 +2235,12 @@ export function workPartTimeJobs(life: LifeStats) {
   if (life.partTimeWorkUsedThisYear) {
     return {
       ...life,
-      popupMessage: "You already worked your part-time job(s) this year.",
-      yearNotes: addYearNote(life, "You already worked your part-time job(s) this year."),
+      popupMessage: "You already worked your part-time job(s) this month.",
+      yearNotes: addYearNote(life, "You already worked your part-time job(s) this month."),
     };
   }
 
-  const income = activeJobs.reduce((total, job) => total + job.pay, 0);
+  const income = monthlyAmount(activeJobs.reduce((total, job) => total + job.pay, 0));
   const stressGain = activeJobs.reduce((total, job) => total + job.stressGain, 0);
   const happinessCost = activeJobs.reduce((total, job) => total + job.happinessCost, 0);
   const disciplineGain = activeJobs.reduce((total, job) => total + job.disciplineGain, 0);
@@ -2056,7 +2249,7 @@ export function workPartTimeJobs(life: LifeStats) {
     ...life,
     cash: life.cash + income,
     partTimeWorkUsedThisYear: true,
-    yearsWorked: life.yearsWorked + 1,
+    yearsWorked: life.yearsWorked + 1 / 12,
     careerXp: life.careerXp + 8 * activeJobs.length,
     discipline: clamp(life.discipline + disciplineGain),
     happiness: clamp(life.happiness - happinessCost),
@@ -2201,8 +2394,8 @@ export function chasePromotion(life: LifeStats) {
   if (life.hasAskedPromotionThisYear) {
     return {
       ...life,
-      popupMessage: "You already asked for a promotion this year.",
-      yearNotes: addYearNote(life, "You already asked for a promotion this year."),
+      popupMessage: "You already asked for a promotion this month.",
+      yearNotes: addYearNote(life, "You already asked for a promotion this month."),
     };
   }
 
@@ -2456,7 +2649,7 @@ export function buyCar(life: LifeStats, car: OwnedAsset) {
   const boughtCar: OwnedAsset = {
     ...car,
     id: `${car.id}-${Date.now()}-${randomBetween(1000, 9999)}`,
-    lastServicedAge: life.age,
+    lastServicedAge: life.monthsLived || 0,
   };
 
   return consumeAction({
@@ -2498,7 +2691,7 @@ export function buyItem(life: LifeStats, item: OwnedAsset) {
       enabled: false,
       feePercent: 0,
     },
-    lastServicedAge: life.age,
+    lastServicedAge: life.monthsLived || 0,
   };
 
   return consumeAction({
@@ -2540,7 +2733,7 @@ export function buyHome(life: LifeStats, home: OwnedAsset) {
       enabled: false,
       feePercent: 0,
     },
-    lastServicedAge: life.age,
+    lastServicedAge: life.monthsLived || 0,
   };
 
   return consumeAction({
@@ -2804,7 +2997,7 @@ export function findTenant(life: LifeStats, homeId: string) {
             : "Bad";
 
   const tenantName = tenantNames[randomBetween(0, tenantNames.length - 1)];
-  const leaseYears = randomBetween(1, 4);
+  const leaseYears = randomBetween(12, 36);
   const rent = getAdjustedRentIncome(home);
 
   const ownedHomes = life.ownedHomes.map((asset) =>
@@ -2826,7 +3019,7 @@ export function findTenant(life: LifeStats, homeId: string) {
     ownedHomes,
     reputation: clamp(life.reputation + 1),
     lifetimeMilestones: addMilestone(life, "Found first tenant"),
-    popupMessage: `${tenantName} moved into ${home.name}. Tenant quality: ${tenantQuality}. Estimated rent: ${formatMoney(rent)}/year.`,
+    popupMessage: `${tenantName} moved into ${home.name}. Tenant quality: ${tenantQuality}. Estimated rent: ${formatMoney(monthlyAmount(rent))}/month.`,
     yearNotes: addYearNote(
       life,
       `You found a ${tenantQuality.toLowerCase()} tenant for ${home.name}.`
@@ -2919,7 +3112,7 @@ export function renovateHome(life: LifeStats, homeId: string) {
       ? {
           ...asset,
           condition: improveCondition(asset.condition),
-          lastServicedAge: life.age,
+          lastServicedAge: life.monthsLived || 0,
           value: Math.floor(asset.value * 1.04),
         }
       : asset
@@ -2972,7 +3165,7 @@ export function serviceCar(life: LifeStats, carId: string) {
       ? {
           ...asset,
           condition: improveCondition(asset.condition),
-          lastServicedAge: life.age,
+          lastServicedAge: life.monthsLived || 0,
           value: Math.floor(asset.value * 1.02),
         }
       : asset
@@ -3185,7 +3378,7 @@ export function takeLoan(life: LifeStats, percent = 25) {
     cash: life.cash + amount,
     debt: life.debt + amount,
     stress: changeStress(life, Math.max(1, Math.floor(safePercent / 50))),
-    popupMessage: `You took a loan for ${formatMoney(amount)} (${safePercent}% of yearly income base).`,
+    popupMessage: `You took a loan for ${formatMoney(amount)} (${safePercent}% of annual income base).`,
     yearNotes: addYearNote(life, `You took a loan for ${formatMoney(amount)} (${safePercent}% income base).`),
   });
 }
@@ -3851,7 +4044,7 @@ export function realEstateFindDeal(life: LifeStats) {
           ...life,
           cash: life.cash - finderCost,
           businessRisk: clamp(life.businessRisk + randomBetween(0, 4)),
-          popupMessage: `Found a ${qualityText} property deal. Price ${formatMoney(price)}, estimated value ${formatMoney(value)}, condition ${condition}/100, yearly rent potential ${formatMoney(rent)}, risk ${risk}/100. Decide if you want to buy it or search again.`,
+          popupMessage: `Found a ${qualityText} property deal. Price ${formatMoney(price)}, estimated value ${formatMoney(value)}, condition ${condition}/100, monthly rent potential ${formatMoney(rent)}, risk ${risk}/100. Decide if you want to buy it or search again.`,
           yearNotes: addYearNote(life, `Real Estate deal found: ${formatMoney(price)} price, ${formatMoney(value)} value.`),
         },
         {
@@ -3902,7 +4095,7 @@ export function realEstateBuyDeal(life: LifeStats) {
           ...life,
           businessValue: Math.max(0, life.businessValue + stats.dealValue),
           businessRisk: clamp(life.businessRisk + Math.floor(stats.dealRisk / 8)),
-          popupMessage: `Bought the property for ${formatMoney(stats.dealPrice)} using your Deal Fund. Next: renovate to improve value, rent it out for yearly revenue, or fix & flip for a risky one-time sale.`,
+          popupMessage: `Bought the property for ${formatMoney(stats.dealPrice)} using your Deal Fund. Next: renovate to improve value, rent it out for monthly revenue, or fix & flip for a risky one-time sale.`,
           yearNotes: addYearNote(life, `Bought Real Estate deal for ${formatMoney(stats.dealPrice)}.`),
         },
         {
@@ -4005,8 +4198,8 @@ export function realEstateRentProject(life: LifeStats) {
           businessRevenue: Math.max(0, life.businessRevenue + revenueGain),
           businessRisk: clamp(life.businessRisk + (success ? -3 : 8)),
           popupMessage: success
-            ? `Tenant search succeeded. You rented out ${units} unit(s). Yearly business revenue +${formatMoney(revenueGain)}.`
-            : "Tenant search failed. The property stayed vacant this year, so it produced no rental income and risk increased.",
+            ? `Tenant search succeeded. You rented out ${units} unit(s). Monthly business revenue +${formatMoney(revenueGain)}.`
+            : "Tenant search failed. The property stayed vacant this month, so it produced no rental income and risk increased.",
           yearNotes: addYearNote(life, success ? `Real Estate rented ${units} unit(s).` : "Real Estate tenant search failed."),
         },
         {
@@ -4155,6 +4348,308 @@ export function seekInvestor(life: LifeStats) {
   );
 }
 
+
+export function hireBusinessManager(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  if (life.business === "None") {
+    return {
+      ...life,
+      popupMessage: "You need an active business before hiring a manager.",
+      yearNotes: addYearNote(life, "You need an active business before hiring a manager."),
+    };
+  }
+
+  const activeBusiness = getUniqueBusinesses(life).find((business) => business.id === life.activeBusinessId) || businessFromLife(life);
+  const currentLevel = getBusinessManagerLevel(activeBusiness || undefined);
+  const cost = 15000 + currentLevel * 17500 + Math.floor((life.businessValue || 0) * 0.025);
+
+  if (life.cash < cost) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(cost)} to hire or upgrade a manager for ${life.business}.`,
+      yearNotes: addYearNote(life, `You need ${formatMoney(cost)} to hire or upgrade a business manager.`),
+    };
+  }
+
+  const updatedBusinesses = getUniqueBusinesses(life).map((business) => {
+    if (business.id !== life.activeBusinessId) return business;
+
+    return {
+      ...business,
+      management: clamp((business.management || 0) + 8 + currentLevel * 2),
+      risk: clamp((business.risk || 0) - 4 - currentLevel),
+      specialStats: {
+        ...(business.specialStats || {}),
+        businessManagerLevel: Math.min(5, currentLevel + 1),
+      },
+    };
+  });
+
+  const active = updatedBusinesses.find((business) => business.id === life.activeBusinessId) || activeBusiness;
+
+  return consumeAction(
+    recalc(
+      applyBusinessToLife(
+        {
+          ...life,
+          cash: life.cash - cost,
+          businesses: updatedBusinesses,
+          stress: changeStress(life, -2),
+          lifetimeMilestones: addMilestone(life, `Hired manager for ${life.business}`),
+          popupMessage: `You hired/raised a manager for ${life.business}. Manager level ${Math.min(5, currentLevel + 1)}. Monthly automation improved.`,
+          yearNotes: addYearNote(life, `Business manager level ${Math.min(5, currentLevel + 1)} hired for ${life.business}.`),
+        },
+        active || null
+      )
+    ),
+    12
+  );
+}
+
+export function createHoldingCompany(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  const businessCount = getUniqueBusinesses(life).length;
+  const cost = 50000;
+  const requiredNetWorth = 250000;
+
+  if (businessCount < 3) {
+    return {
+      ...life,
+      popupMessage: "A holding company is a late-game side option. Own at least 3 businesses before creating one.",
+      yearNotes: addYearNote(life, "You need at least 3 businesses before creating a holding company."),
+    };
+  }
+
+  if (life.netWorth < requiredNetWorth) {
+    return {
+      ...life,
+      popupMessage: `You need at least ${formatMoney(requiredNetWorth)} net worth before creating a holding company.`,
+      yearNotes: addYearNote(life, `You need ${formatMoney(requiredNetWorth)} net worth before creating a holding company.`),
+    };
+  }
+
+  if ((life.holdingCompanyLevel || 0) > 0) {
+    return {
+      ...life,
+      popupMessage: `${life.holdingCompanyName || "Your holding company"} already exists. Upgrade it instead.`,
+      yearNotes: addYearNote(life, "Holding company already exists."),
+    };
+  }
+
+  if (life.cash < cost) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(cost)} to create a holding company.`,
+      yearNotes: addYearNote(life, `You need ${formatMoney(cost)} to create a holding company.`),
+    };
+  }
+
+  return consumeAction(
+    recalc({
+      ...life,
+      cash: life.cash - cost,
+      holdingCompanyName: `${life.name} Holdings`,
+      holdingCompanyLevel: 1,
+      holdingCompanyManagers: 1,
+      holdingCompanyAutomation: 20,
+      holdingCompanyMonthlyCost: 2500,
+      businessManagement: clamp((life.businessManagement || 0) + 5),
+      reputation: clamp(life.reputation + 4),
+      lifetimeMilestones: addMilestone(life, `Created ${life.name} Holdings`),
+      popupMessage: `You created ${life.name} Holdings. It now sits above your businesses as a parent company for automation, managers, and portfolio bonuses.`,
+      yearNotes: addYearNote(life, `Created ${life.name} Holdings.`),
+    }),
+    15
+  );
+}
+
+export function upgradeHoldingCompany(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  const currentLevel = life.holdingCompanyLevel || 0;
+
+  if (currentLevel <= 0) return createHoldingCompany(life);
+  if (currentLevel >= 5) {
+    return {
+      ...life,
+      popupMessage: "Your holding company is already at max level.",
+      yearNotes: addYearNote(life, "Holding company is already max level."),
+    };
+  }
+
+  const cost = 65000 + currentLevel * 75000;
+
+  if (life.cash < cost) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(cost)} to upgrade ${life.holdingCompanyName || "your holding company"}.`,
+      yearNotes: addYearNote(life, `You need ${formatMoney(cost)} to upgrade holding company.`),
+    };
+  }
+
+  return consumeAction(
+    recalc({
+      ...life,
+      cash: life.cash - cost,
+      holdingCompanyLevel: currentLevel + 1,
+      holdingCompanyManagers: (life.holdingCompanyManagers || 0) + 1,
+      holdingCompanyAutomation: clamp((life.holdingCompanyAutomation || 0) + 15),
+      holdingCompanyMonthlyCost: (life.holdingCompanyMonthlyCost || 2500) + 1750 + currentLevel * 500,
+      reputation: clamp(life.reputation + 3),
+      businessManagement: clamp((life.businessManagement || 0) + 4),
+      popupMessage: `${life.holdingCompanyName || "Your holding company"} upgraded to level ${currentLevel + 1}. Automation and portfolio control improved.`,
+      yearNotes: addYearNote(life, `Holding company upgraded to level ${currentLevel + 1}.`),
+    }),
+    15
+  );
+}
+
+export function automateBusinessPortfolio(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  const holding = getHoldingCompanyPower(life);
+  const businesses = getUniqueBusinesses(life);
+
+  if (!holding.active) {
+    return {
+      ...life,
+      popupMessage: "Create a holding company before automating the full portfolio.",
+      yearNotes: addYearNote(life, "Create a holding company before automating the full portfolio."),
+    };
+  }
+
+  if (businesses.length === 0) {
+    return {
+      ...life,
+      popupMessage: "You need businesses before automating a portfolio.",
+      yearNotes: addYearNote(life, "You need businesses before automating a portfolio."),
+    };
+  }
+
+  const updatedBusinesses = businesses.map((business) => {
+    const managerLevel = getBusinessManagerLevel(business);
+    const valueGain = Math.floor((business.value || 0) * (0.01 + holding.efficiency / 5000)) + holding.level * 700 + managerLevel * 550;
+    const revenueGain = Math.floor((business.revenue || 0) * (0.008 + holding.efficiency / 7000)) + holding.level * 450 + managerLevel * 400;
+
+    return {
+      ...business,
+      value: Math.max(0, (business.value || 0) + valueGain),
+      revenue: Math.max(0, (business.revenue || 0) + revenueGain),
+      management: clamp((business.management || 0) + 1 + Math.floor(holding.efficiency / 25)),
+      risk: clamp((business.risk || 0) - 1 - Math.floor(holding.efficiency / 30)),
+    };
+  });
+
+  const active = updatedBusinesses.find((business) => business.id === life.activeBusinessId) || updatedBusinesses[0] || null;
+
+  return consumeAction(
+    recalc(
+      applyBusinessToLife(
+        {
+          ...life,
+          businesses: updatedBusinesses,
+          stress: changeStress(life, -3),
+          popupMessage: `${life.holdingCompanyName || "Your holding company"} automated ${updatedBusinesses.length} businesses. Portfolio value and revenue improved while risk fell.`,
+          yearNotes: addYearNote(life, `Holding company automated ${updatedBusinesses.length} businesses.`),
+        },
+        active
+      )
+    ),
+    10
+  );
+}
+
+export function careerMentorSession(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  const cost = life.jobId === "unemployed" ? 750 : 1500 + Math.floor((life.salary || 0) * 0.01);
+
+  if (life.cash < cost) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(cost)} for a serious career mentoring session.`,
+      yearNotes: addYearNote(life, `You need ${formatMoney(cost)} for career mentoring.`),
+    };
+  }
+
+  return consumeAction(
+    recalc({
+      ...life,
+      cash: life.cash - cost,
+      careerXp: (life.careerXp || 0) + 12,
+      intelligence: clamp(life.intelligence + 1),
+      discipline: clamp(life.discipline + 1),
+      reputation: clamp(life.reputation + 2),
+      popupMessage: "You met a career mentor. Career XP +12, reputation +2, intelligence +1, discipline +1.",
+      yearNotes: addYearNote(life, "Career mentor session completed."),
+    }),
+    12
+  );
+}
+
+export function buildProfessionalNetwork(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  return consumeAction(
+    recalc({
+      ...life,
+      careerXp: (life.careerXp || 0) + 8,
+      charisma: clamp(life.charisma + 2),
+      reputation: clamp(life.reputation + randomBetween(1, 4)),
+      friendships: clamp(life.friendships + randomBetween(1, 3)),
+      stress: changeStress(life, 1),
+      popupMessage: "You built your professional network. Career XP +8, charisma +2, reputation improved.",
+      yearNotes: addYearNote(life, "Built professional network."),
+    }),
+    10
+  );
+}
+
+export function realEstateMarketResearch(life: LifeStats) {
+  const blocked = noActions(life);
+  if (blocked) return blocked;
+
+  const cost = 1250;
+
+  if (life.cash < cost) {
+    return {
+      ...life,
+      popupMessage: `You need ${formatMoney(cost)} to research the real estate market.`,
+      yearNotes: addYearNote(life, `You need ${formatMoney(cost)} for real estate research.`),
+    };
+  }
+
+  const updatedHomes = (life.ownedHomes || []).map((home) => ({
+    ...home,
+    value: Math.floor((home.value || 0) * 1.01),
+    rentIncome: home.rentIncome ? Math.floor(home.rentIncome * 1.01) : home.rentIncome,
+  }));
+
+  return consumeAction(
+    recalc({
+      ...life,
+      cash: life.cash - cost,
+      ownedHomes: updatedHomes,
+      skills: {
+        ...life.skills,
+        realEstate: Math.min(10, (life.skills.realEstate || 0) + 1),
+      },
+      reputation: clamp(life.reputation + 1),
+      popupMessage: "You researched the property market. Real estate skill +1, property knowledge improved, owned homes gained a small value boost.",
+      yearNotes: addYearNote(life, "Researched real estate market."),
+    }),
+    10
+  );
+}
+
 export function sellBusiness(life: LifeStats) {
   const blocked = noActions(life);
   if (blocked) return blocked;
@@ -4285,11 +4780,11 @@ function processRentalEvents(life: LifeStats): LifeStats {
         ...home,
         rentalStatus: "Vacant" as const,
         lastRentalEvent: "none" as RentalEventType,
-        lastRentalEventMessage: `${home.name} is vacant and earned no rent this year.`,
+        lastRentalEventMessage: `${home.name} is vacant and earned no rent this month.`,
       };
     }
 
-    const rent = getAdjustedRentIncome(home);
+    const rent = monthlyAmount(getAdjustedRentIncome(home));
     const managerEnabled = !!home.propertyManager?.enabled;
     const managerFee = managerEnabled
       ? Math.floor(rent * ((home.propertyManager?.feePercent || 10) / 100))
@@ -4361,8 +4856,8 @@ function processRentalEvents(life: LifeStats): LifeStats {
       addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     }
 
-    const yearsLeft = Math.max(0, (updatedHome.tenantYearsRemaining || 1) - 1);
-    const movedOut = yearsLeft <= 0 || randomBetween(1, 100) <= Math.max(2, moveOutChance - managerProtection);
+    const monthsLeft = Math.max(0, (updatedHome.tenantYearsRemaining || 1) - 1);
+    const movedOut = monthsLeft <= 0 || randomBetween(1, 100) <= Math.max(1, Math.floor((moveOutChance - managerProtection) / 4));
 
     if (movedOut) {
       updatedHome = {
@@ -4376,7 +4871,7 @@ function processRentalEvents(life: LifeStats): LifeStats {
       };
       addRentalNotice(updatedHome.lastRentalEventMessage || "Rental status changed.");
     } else {
-      updatedHome.tenantYearsRemaining = yearsLeft;
+      updatedHome.tenantYearsRemaining = monthsLeft;
     }
 
     return updatedHome;
@@ -4400,8 +4895,8 @@ function updateAssetValues(life: LifeStats): LifeStats {
   return {
     ...life,
     ownedCars: life.ownedCars.map((car) => {
-      const yearsSinceService = life.age - (car.lastServicedAge || life.age);
-      const condition = yearsSinceService >= 3 || randomBetween(1, 100) <= 18
+      const monthsSinceService = Math.max(0, (life.monthsLived || 0) - (car.lastServicedAge || life.monthsLived || 0));
+      const condition = monthsSinceService >= 36 || randomBetween(1, 100) <= 2
         ? degradeCondition(car.condition)
         : car.condition;
 
@@ -4412,8 +4907,8 @@ function updateAssetValues(life: LifeStats): LifeStats {
       };
     }),
     ownedHomes: life.ownedHomes.map((home) => {
-      const yearsSinceRenovation = life.age - (home.lastServicedAge || life.age);
-      const condition = yearsSinceRenovation >= 4 || randomBetween(1, 100) <= 14
+      const monthsSinceRenovation = Math.max(0, (life.monthsLived || 0) - (home.lastServicedAge || life.monthsLived || 0));
+      const condition = monthsSinceRenovation >= 48 || randomBetween(1, 100) <= 1
         ? degradeCondition(home.condition)
         : home.condition;
 
@@ -4469,7 +4964,7 @@ function payYearlyCosts(life: LifeStats): LifeStats {
         happiness: clamp(updated.happiness - 5),
         health: clamp(updated.health - 2),
         reputation: clamp(updated.reputation - 1),
-        eventLog: addLog(updated, "Unpaid Housing: You could not pay your yearly housing cost."),
+        eventLog: addLog(updated, "Unpaid Housing: You could not pay your monthly housing cost."),
       };
     }
   }
@@ -4698,7 +5193,7 @@ function getRandomChoiceEvent(life: LifeStats): LifeChoiceEvent | null {
       id: "overtime-offer",
       type: "life",
       title: "Overtime Offer",
-      description: "Your boss offers extra overtime this year.",
+      description: "Your boss offers extra overtime this month.",
       acceptLabel: "Work overtime",
       declineLabel: "Protect balance",
       acceptEffect: {
@@ -4802,26 +5297,48 @@ function checkDeath(life: LifeStats) {
   };
 }
 
-export function endYear(life: LifeStats) {
+export function endMonth(life: LifeStats) {
   const before = recalc(life);
   const previousLogLength = before.eventLog.length;
+  const previousMonth = before.month || 1;
+  const previousCalendarYear = before.calendarYear || 2026;
+  const nextMonth = previousMonth >= 12 ? 1 : previousMonth + 1;
+  const nextCalendarYear = previousMonth >= 12 ? previousCalendarYear + 1 : previousCalendarYear;
+  const didBirthday = previousMonth >= 12;
+  const nextAge = before.age + (didBirthday ? 1 : 0);
+  const nextMonthsLived = (before.monthsLived || 0) + 1;
 
   let updated: LifeStats = {
     ...before,
-    age: before.age + 1,
+    age: nextAge,
+    month: nextMonth,
+    calendarYear: nextCalendarYear,
+    monthsLived: nextMonthsLived,
     energy: MAX_ENERGY,
-    actionsLeft: ACTIONS_PER_YEAR,
+    actionsLeft: 0,
     recoveryActionsUsed: {},
     hasAskedPromotionThisYear: false,
+    partTimeWorkUsedThisYear: false,
     popupMessage: null,
   };
 
-  const grossBusinessIncome =
-    updated.business !== "None"
-      ? Math.floor(updated.businessRevenue * randomBetween(12, 38) * 0.01)
-      : 0;
-  const businessPayroll = getBusinessPayroll(updated);
-  const businessIncome = Math.floor((grossBusinessIncome - businessPayroll) * ((updated.businessOwnership || 100) / 100));
+  const portfolioBusinessesForIncome = getUniqueBusinesses(updated);
+  const holdingForIncome = getHoldingCompanyPower(updated);
+  const grossBusinessIncome = portfolioBusinessesForIncome.reduce((total, business) => {
+    const managerLevel = getBusinessManagerLevel(business);
+    const holdingBoost = holdingForIncome.active ? 1 + holdingForIncome.efficiency * 0.003 : 1;
+    const managerBoost = 1 + managerLevel * 0.05;
+    const ownership = (business.ownership || 100) / 100;
+    const gross = Math.floor(monthlyAmount(business.revenue || 0) * randomBetween(70, 125) * 0.01 * managerBoost * holdingBoost * ownership);
+    return total + gross;
+  }, 0);
+  const businessPayroll = portfolioBusinessesForIncome.reduce((total, business) => total + monthlyAmount(business.payroll || 0), 0);
+  const businessManagerCosts = portfolioBusinessesForIncome.reduce((total, business) => {
+    const managerLevel = getBusinessManagerLevel(business);
+    return total + (managerLevel > 0 ? 900 + managerLevel * 650 : 0);
+  }, 0);
+  const holdingCompanyCost = holdingForIncome.active ? holdingForIncome.monthlyCost : 0;
+  const businessIncome = Math.max(0, grossBusinessIncome - businessPayroll - businessManagerCosts - holdingCompanyCost);
 
   const currentJob = getJobById(updated.jobId);
   const normalizedSalary =
@@ -4834,111 +5351,145 @@ export function endYear(life: LifeStats) {
     salary: normalizedSalary,
   };
 
-  const yearlySalary = normalizedSalary;
-  const yearlyJobExperience =
+  const monthlySalary = monthlyAmount(normalizedSalary);
+  const monthlyJobExperience =
     updated.jobId === "unemployed"
       ? updated.jobExperience
       : {
           ...updated.jobExperience,
-          [updated.jobId]: (updated.jobExperience[updated.jobId] || 0) + 1,
+          [updated.jobId]: (updated.jobExperience[updated.jobId] || 0) + 1 / 12,
         };
-  const partTimeIncome = getPartTimeIncome(updated);
+  const partTimeIncome = monthlyAmount(getPartTimeIncome(updated));
   const rentalIncomeBeforeCosts = getRentalIncomeEstimate(updated);
 
   updated = {
     ...updated,
-    cash: updated.cash + yearlySalary + businessIncome + partTimeIncome,
-    careerXp: updated.careerXp + (yearlySalary > 0 ? 18 : 0),
-    jobExperience: yearlyJobExperience,
-    yearsWorked: updated.yearsWorked + (yearlySalary > 0 ? 1 : 0),
+    cash: updated.cash + monthlySalary + businessIncome + partTimeIncome,
+    careerXp: updated.careerXp + (monthlySalary > 0 ? 2 : 0),
+    jobExperience: monthlyJobExperience,
+    yearsWorked: updated.yearsWorked + (monthlySalary > 0 ? 1 / 12 : 0),
     eventLog:
-      yearlySalary > 0
-        ? addLog(updated, `Salary paid: ${formatMoney(yearlySalary)} from ${updated.job}. Job experience +1.`)
+      monthlySalary > 0
+        ? addLog(updated, `${getMonthName(nextMonth)} ${nextCalendarYear}: Salary paid ${formatMoney(monthlySalary)} from ${updated.job}.`)
         : updated.eventLog,
     businessPayroll,
-    partTimeWorkUsedThisYear: false,
   };
 
   updated = processRentalEvents(updated);
   updated = payYearlyCosts(updated);
-  updated = updateAssetValues(updated);
+
+  if (didBirthday) {
+    updated = updateAssetValues(updated);
+  }
 
   const housingBonus = getHousingStatBonus(updated);
-  const jobStress = updated.jobId === "unemployed" ? -2 : 4;
-  const partTimeStress = (updated.partTimeJobs || []).length * 2;
+  const jobStress = updated.jobId === "unemployed" ? -1 : 1;
+  const partTimeStress = (updated.partTimeJobs || []).length;
 
   const difficultyStress =
     updated.difficulty === "Easy"
-      ? -3
+      ? -1
       : updated.difficulty === "Hard"
-        ? 3
+        ? 1
         : updated.difficulty === "Brutal"
-          ? 6
+          ? 2
           : 0;
   const backgroundSupport =
     updated.background === "Stable Family" || updated.background === "Rich Family"
-      ? 2
+      ? 1
       : updated.background === "Struggling"
-        ? -2
+        ? -1
         : 0;
 
   updated = {
     ...updated,
-    happiness: clamp(updated.happiness + housingBonus.happiness + backgroundSupport),
-    reputation: clamp(updated.reputation + housingBonus.reputation),
-    stress: clamp((updated.stress ?? 35) - 7 + housingBonus.stress + jobStress + partTimeStress + difficultyStress),
+    happiness: clamp(updated.happiness + (didBirthday ? housingBonus.happiness : 0) + backgroundSupport),
+    reputation: clamp(updated.reputation + (didBirthday ? housingBonus.reputation : 0)),
+    stress: clamp((updated.stress ?? 35) - 2 + housingBonus.stress + jobStress + partTimeStress + difficultyStress),
   };
 
   if (updated.business !== "None") {
     const businessType = getBusinessTypeById(updated.businessTypeId) || businessTypes[0];
     const strength = getBusinessStrength(updated);
-    const yearlyValueChange = Math.floor(
-      (updated.businessRevenue * randomBetween(4, 16) * 0.01 +
-        strength * 150 +
-        updated.businessEmployees * 1500 -
-        updated.businessRisk * 120) *
+    const monthlyValueChange = Math.floor(
+      (monthlyAmount(updated.businessRevenue) * randomBetween(2, 10) * 0.01 +
+        strength * 18 +
+        updated.businessEmployees * 130 -
+        updated.businessRisk * 12) *
         businessType.revenuePotential
     );
 
     const passiveRevenueAdjustment = isProductBusinessType(updated.businessTypeId)
-      ? Math.floor((strength - updated.businessRisk / 2) * 65) + randomBetween(-2500, 6000)
-      : Math.floor((strength - updated.businessRisk / 2) * 160) + randomBetween(-5000, 12000);
+      ? Math.floor((strength - updated.businessRisk / 2) * 8) + randomBetween(-300, 900)
+      : Math.floor((strength - updated.businessRisk / 2) * 16) + randomBetween(-700, 1600);
 
     updated = normalizeBusiness({
       ...updated,
-      businessValue: Math.max(0, updated.businessValue + yearlyValueChange),
+      businessValue: Math.max(0, updated.businessValue + monthlyValueChange),
       businessRevenue: Math.max(0, updated.businessRevenue + passiveRevenueAdjustment),
       businessRisk: clamp(
         updated.businessRisk +
-          randomBetween(-4, 7) +
-          (updated.businessEmployees > updated.businessManagement / 12 ? 2 : 0)
+          randomBetween(-1, 2) +
+          (updated.businessEmployees > updated.businessManagement / 12 ? 1 : 0)
       ),
       eventLog: addLog(
         updated,
-        `${updated.business}: yearly profit ${formatMoney(businessIncome)} after payroll ${formatMoney(businessPayroll)}.`
+        `${updated.business}: monthly profit ${formatMoney(businessIncome)} after payroll ${formatMoney(businessPayroll)}.`
       ),
     });
 
-    updated = applyProductLifecycleYearlyUpdate(updated);
+    if (didBirthday) {
+      updated = applyProductLifecycleYearlyUpdate(updated);
+    }
 
-    updated = applyBusinessTypeYearlyEvent(updated);
+    if (randomBetween(1, 100) <= 18) {
+      updated = applyBusinessTypeYearlyEvent(updated);
+    }
+
     updated = addCompletedBusinessMilestones(updated);
   }
 
+  if ((updated.holdingCompanyLevel || 0) > 0 && (updated.businesses || []).length > 1) {
+    const holding = getHoldingCompanyPower(updated);
+    const managedBusinesses = getUniqueBusinesses(updated).map((business) => {
+      const managerLevel = getBusinessManagerLevel(business);
+      if (managerLevel <= 0 && holding.efficiency < 25) return business;
+
+      return {
+        ...business,
+        value: Math.max(0, (business.value || 0) + Math.floor((business.value || 0) * (holding.efficiency / 12000 + managerLevel / 800))),
+        revenue: Math.max(0, (business.revenue || 0) + Math.floor((business.revenue || 0) * (holding.efficiency / 15000 + managerLevel / 1000))),
+        risk: clamp((business.risk || 0) - Math.max(0, Math.floor(holding.efficiency / 35)) - Math.max(0, Math.floor(managerLevel / 2))),
+      };
+    });
+    const active = managedBusinesses.find((business) => business.id === updated.activeBusinessId) || managedBusinesses[0] || null;
+
+    updated = recalc(
+      applyBusinessToLife(
+        {
+          ...updated,
+          businesses: managedBusinesses,
+          eventLog: addLog(updated, `${updated.holdingCompanyName || "Holding company"}: portfolio automation managed ${managedBusinesses.length} businesses.`),
+        },
+        active
+      )
+    );
+  }
+
   if (updated.business !== "None" && updated.businessRisk >= 75) {
-    const failChance = updated.businessRisk - 55;
+    const failChance = Math.max(1, Math.floor((updated.businessRisk - 55) / 4));
 
     if (randomBetween(1, 100) <= failChance) {
       updated = {
         ...updated,
-        businessValue: Math.max(1000, Math.floor(updated.businessValue * 0.55)),
-        businessRevenue: Math.max(0, Math.floor(updated.businessRevenue * 0.7)),
-        businessRisk: clamp(updated.businessRisk - randomBetween(15, 30)),
-        businessBrand: clamp((updated.businessBrand || 0) - randomBetween(5, 12)),
-        happiness: clamp(updated.happiness - 8),
-        reputation: clamp(updated.reputation - 5),
-        popupMessage: `${updated.business} survived a serious crisis, but lost value and revenue.`,
-        eventLog: addLog(updated, `Business Crisis: ${updated.business} survived a serious crisis but lost value and revenue.`),
+        businessValue: Math.max(1000, Math.floor(updated.businessValue * 0.88)),
+        businessRevenue: Math.max(0, Math.floor(updated.businessRevenue * 0.93)),
+        businessRisk: clamp(updated.businessRisk - randomBetween(4, 10)),
+        businessBrand: clamp((updated.businessBrand || 0) - randomBetween(1, 3)),
+        happiness: clamp(updated.happiness - 2),
+        reputation: clamp(updated.reputation - 1),
+        popupMessage: `${updated.business} had a rough month and lost value/revenue, but survived.`,
+        eventLog: addLog(updated, `Business Crisis: ${updated.business} had a rough month and lost value/revenue.`),
       };
     }
   }
@@ -4946,11 +5497,11 @@ export function endYear(life: LifeStats) {
   if (updated.jobId === "unemployed") {
     updated = {
       ...updated,
-      happiness: clamp(updated.happiness - randomBetween(1, 3)),
+      happiness: clamp(updated.happiness - (randomBetween(1, 100) <= 35 ? 1 : 0)),
     };
   }
 
-  if (randomBetween(1, 100) <= 35 && !updated.pendingLifeEvent) {
+  if (randomBetween(1, 100) <= 8 && !updated.pendingLifeEvent) {
     const event = getRandomChoiceEvent(updated);
 
     if (event) {
@@ -4994,9 +5545,9 @@ export function endYear(life: LifeStats) {
     ...updated,
     eventLog: addLog(
       updated,
-      `Age ${updated.age}: Salary ${formatMoney(yearlySalary)}. Business income ${formatMoney(businessIncome)}. Part-time income ${formatMoney(partTimeIncome)}. Rental income estimate ${formatMoney(rentalIncomeBeforeCosts)}.`
+      `${getMonthName(updated.month)} ${updated.calendarYear}: Salary ${formatMoney(monthlySalary)}. Business ${formatMoney(businessIncome)}. Part-time ${formatMoney(partTimeIncome)}. Rental ${formatMoney(rentalIncomeBeforeCosts)}.`
     ),
-    actionsLeft: ACTIONS_PER_YEAR,
+    actionsLeft: 0,
     yearNotes: [],
   };
 
@@ -5007,18 +5558,55 @@ export function endYear(life: LifeStats) {
     };
   }
 
-  const finalLife = recalc(updated);
+  let finalLife = recalc(updated);
+  const hadLifeEvent = Boolean(finalLife.pendingLifeEvent);
   const goalsCompleted = getYearGoalCompletions(before, finalLife);
+
+  finalLife = applyGameAchievements(before, finalLife);
+
   const newEvents = finalLife.eventLog.slice(previousLogLength).slice(0, 8);
-  const income = Math.max(0, yearlySalary + businessIncome + partTimeIncome + rentalIncomeBeforeCosts);
+  const income = Math.max(0, monthlySalary + businessIncome + partTimeIncome + rentalIncomeBeforeCosts);
   const cashChange = finalLife.cash - before.cash;
   const estimatedExpenses = Math.max(0, income - cashChange);
+  const xpGain = getMonthlyXpGain({
+    monthlyNet: cashChange,
+    monthlySalary,
+    businessIncome,
+    partTimeIncome,
+    rentalIncome: rentalIncomeBeforeCosts,
+    goalsCompleted: goalsCompleted.length,
+    hadLifeEvent,
+  });
+  const nextLifetimeXp = (finalLife.lifetimeXp || finalLife.playerXp || 0) + xpGain;
+  const nextLevel = getLevelFromXp(nextLifetimeXp);
+  const currentLevel = finalLife.playerLevel || getLevelFromXp(finalLife.lifetimeXp || finalLife.playerXp || 0);
+  const levelMessage = nextLevel > currentLevel ? ` Level up! You reached Level ${nextLevel}.` : "";
+  const monthTitle = `${getMonthName(finalLife.month)} ${finalLife.calendarYear}`;
+  const recapEvents = newEvents.length > 0 ? newEvents : [`You advanced to ${monthTitle}.`];
+  const monthlyFeed = [
+    `📅 ${monthTitle}: ${cashChange >= 0 ? "Cashflow positive" : "Cashflow negative"} (${cashChange >= 0 ? "+" : ""}${formatMoney(cashChange)} cash).`,
+    `💵 Income: ${formatMoney(income)}. Estimated expenses: ${formatMoney(estimatedExpenses)}.`,
+    `⭐ XP gained: +${xpGain}.${levelMessage}`,
+    ...goalsCompleted.map((goal) => `🎯 Goal complete: ${goal}.`),
+    ...recapEvents.slice(0, 4),
+  ].slice(0, 8);
 
   return {
     ...finalLife,
+    playerLevel: nextLevel,
+    playerXp: nextLifetimeXp,
+    lifetimeXp: nextLifetimeXp,
+    monthlyFeed,
+    popupMessage: finalLife.pendingLifeEvent
+      ? finalLife.popupMessage
+      : `Month complete: ${monthTitle}. Cash ${cashChange >= 0 ? "+" : ""}${formatMoney(cashChange)}, XP +${xpGain}.${levelMessage} Click Okay to continue.`,
     lastYearRecap: {
       previousAge: before.age,
       newAge: finalLife.age,
+      previousMonth,
+      newMonth: finalLife.month,
+      previousCalendarYear,
+      newCalendarYear: finalLife.calendarYear,
       cashBefore: before.cash,
       cashAfter: finalLife.cash,
       cashChange,
@@ -5033,10 +5621,14 @@ export function endYear(life: LifeStats) {
       happinessChange: finalLife.happiness - before.happiness,
       income,
       expenses: estimatedExpenses,
-      events: newEvents.length > 0 ? newEvents : [`You advanced from age ${before.age} to ${finalLife.age}.`],
+      events: monthlyFeed,
       goalsCompleted,
     },
   };
+}
+
+export function endYear(life: LifeStats) {
+  return endMonth(life);
 }
 
 export function getLegacyScore(life: LifeStats) {
@@ -5113,4 +5705,99 @@ export function getLegacyRank(score: number) {
   if (score >= 6000) return "Successful Citizen";
   if (score >= 3000) return "Respectable Life";
   return "Forgotten Dreamer";
+}
+
+export function getDefaultGameSettings() {
+  return {
+    showMonthlyRecap: true,
+    showLifeFeed: true,
+    showAchievementPopups: true,
+    moneyWarnings: true,
+    healthWarnings: true,
+    businessAlerts: true,
+    relationshipAlerts: true,
+    confirmRiskyActions: true,
+    compactMode: false,
+    reduceAnimations: false,
+    highContrastMode: false,
+    largeButtons: false,
+    simpleTextMode: false,
+    currencyFormat: "compact" as const,
+  };
+}
+
+export function normalizeGameSettings(life: LifeStats) {
+  return {
+    ...getDefaultGameSettings(),
+    ...(life.settings || {}),
+  };
+}
+
+export function updateGameSettings(life: LifeStats, patch: Partial<NonNullable<LifeStats["settings"]>>): LifeStats {
+  return {
+    ...life,
+    settings: {
+      ...normalizeGameSettings(life),
+      ...patch,
+    },
+    popupMessage: "Settings updated.",
+  };
+}
+
+export function betaAddCash(life: LifeStats, amount: number): LifeStats {
+  const nextCash = Math.max(0, life.cash + amount);
+  return {
+    ...life,
+    cash: nextCash,
+    netWorth: Math.max(0, life.netWorth + amount),
+    popupMessage: amount >= 0 ? `Beta tool: added ${formatMoney(amount)} cash.` : `Beta tool: removed ${formatMoney(Math.abs(amount))} cash.`,
+    yearNotes: addYearNote(life, amount >= 0 ? `Beta tool added ${formatMoney(amount)} cash.` : `Beta tool removed ${formatMoney(Math.abs(amount))} cash.`),
+  };
+}
+
+export function betaSetAge(life: LifeStats, age: number): LifeStats {
+  const safeAge = Math.max(18, Math.min(120, Math.round(age)));
+  return {
+    ...life,
+    age: safeAge,
+    popupMessage: `Beta tool: age set to ${safeAge}.`,
+    yearNotes: addYearNote(life, `Beta tool set age to ${safeAge}.`),
+  };
+}
+
+export function betaAddXP(life: LifeStats, amount: number): LifeStats {
+  return addPlayerXp(
+    {
+      ...life,
+      popupMessage: `Beta tool: added ${amount} XP.`,
+      yearNotes: addYearNote(life, `Beta tool added ${amount} XP.`),
+    },
+    amount,
+  );
+}
+
+export function betaClearDebt(life: LifeStats): LifeStats {
+  const oldDebt = life.debt;
+  return {
+    ...life,
+    debt: 0,
+    netWorth: life.netWorth + oldDebt,
+    popupMessage: "Beta tool: debt cleared.",
+    yearNotes: addYearNote(life, "Beta tool cleared debt."),
+  };
+}
+
+export function betaAdjustStat(
+  life: LifeStats,
+  stat: "health" | "happiness" | "smarts" | "looks" | "stress" | "energy",
+  amount: number,
+): LifeStats {
+  const current = Number(life[stat] || 0);
+  const nextValue = clamp(current + amount, 0, 100);
+  return {
+    ...life,
+    [stat]: nextValue,
+    popupMessage: `Beta tool: ${stat} changed by ${amount}.`,
+    yearNotes: addYearNote(life, `Beta tool changed ${stat} by ${amount}.`),
+  };
 }

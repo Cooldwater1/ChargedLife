@@ -1,5 +1,6 @@
-import { ACTIONS_PER_YEAR, MAX_ENERGY, educationLevels } from "./data";
-import type { LifeStats, Origin } from "./types";
+import { MAX_ENERGY, educationLevels } from "./data";
+import type { LifeStats,
+  GameSettings, Origin } from "./types";
 import {
   clamp,
   createEmptySkills,
@@ -9,6 +10,24 @@ import {
   formatMoney,
   randomBetween,
 } from "./utils";
+
+export const DEFAULT_GAME_SETTINGS = {
+  showMonthlyRecap: true,
+  showLifeFeed: true,
+  showAchievementPopups: true,
+  moneyWarnings: true,
+  healthWarnings: true,
+  businessAlerts: true,
+  relationshipAlerts: true,
+  confirmRiskyActions: true,
+  compactMode: false,
+  reduceAnimations: false,
+  highContrastMode: false,
+  largeButtons: false,
+  simpleTextMode: false,
+  currencyFormat: "compact" as const,
+};
+
 
 export function createNewLife(name: string, origin: Origin): LifeStats {
   const background = findBackground(origin.background);
@@ -31,6 +50,9 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
   return {
     name,
     age: 18,
+    month: 1,
+    calendarYear: 2026,
+    monthsLived: 0,
     country: origin.country,
     background: origin.background,
     trait: origin.trait,
@@ -173,10 +195,22 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
     businesses: [],
     activeBusinessId: "",
     businessesStarted: 0,
+    holdingCompanyName: "",
+    holdingCompanyLevel: 0,
+    holdingCompanyManagers: 0,
+    holdingCompanyAutomation: 0,
+    holdingCompanyMonthlyCost: 0,
 
     lifetimeMilestones: [],
+    playerLevel: 1,
+    playerXp: 0,
+    lifetimeXp: 0,
+    monthlyFeed: [
+      "🎯 First goal: find stable income, build skills, and survive your first months.",
+      "💰 Money tip: cash keeps you safe, but assets build your future.",
+    ],
 
-    actionsLeft: ACTIONS_PER_YEAR,
+    actionsLeft: 0,
     recoveryActionsUsed: {},
     yearNotes: [],
     lastYearRecap: null,
@@ -187,7 +221,7 @@ export function createNewLife(name: string, origin: Origin): LifeStats {
 
     eventLog: [
       `You started adult life at age 18 with ${formatMoney(startingCash)}.`,
-      "You currently have no rent, no house, no car, no tenants, and no yearly expenses.",
+      "You currently have no rent, no house, no car, no tenants, and no monthly expenses.",
       `You were born in ${origin.country} into a ${origin.background.toLowerCase()} family.`,
       `Your childhood trait is ${origin.trait}.`,
       `Difficulty selected: ${origin.difficulty}.`,

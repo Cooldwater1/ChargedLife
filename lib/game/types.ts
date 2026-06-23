@@ -1,3 +1,21 @@
+
+export type GameSettings = {
+  showMonthlyRecap: boolean;
+  showLifeFeed: boolean;
+  showAchievementPopups: boolean;
+  moneyWarnings: boolean;
+  healthWarnings: boolean;
+  businessAlerts: boolean;
+  relationshipAlerts: boolean;
+  confirmRiskyActions: boolean;
+  compactMode: boolean;
+  reduceAnimations: boolean;
+  highContrastMode: boolean;
+  largeButtons: boolean;
+  simpleTextMode: boolean;
+  currencyFormat: "compact" | "full";
+};
+
 export type SkillId =
   | "business"
   | "marketing"
@@ -37,7 +55,8 @@ export type ActiveTab =
   | "economy"
   | "business"
   | "actions"
-  | "timeline";
+  | "timeline"
+  | "settings";
 
 export type ActionPage =
   | "main"
@@ -106,6 +125,10 @@ export type LifeChoiceEvent = {
 export type YearRecap = {
   previousAge: number;
   newAge: number;
+  previousMonth?: number;
+  newMonth?: number;
+  previousCalendarYear?: number;
+  newCalendarYear?: number;
   cashBefore: number;
   cashAfter: number;
   cashChange: number;
@@ -259,6 +282,7 @@ export type StudentLoanStatus = "not_applied" | "approved" | "denied";
 export type EconomyBreakdown = {
   workPayPerClick: number;
   possibleWorkIncomePerYear: number;
+  monthlySalary: number;
 
   businessIncomeEstimate: number;
   rentalIncomeEstimate: number;
@@ -275,6 +299,7 @@ export type EconomyBreakdown = {
   totalHomeValue: number;
 
   netPassiveYear: number;
+  netPassiveMonth: number;
 
   occupiedRentals: number;
   vacantRentals: number;
@@ -283,6 +308,9 @@ export type EconomyBreakdown = {
 export type LifeStats = {
   name: string;
   age: number;
+  month: number;
+  calendarYear: number;
+  monthsLived: number;
   country: string;
   background: string;
   trait: string;
@@ -366,7 +394,17 @@ export type LifeStats = {
   activeBusinessId: string;
   businessesStarted: number;
 
+  holdingCompanyName: string;
+  holdingCompanyLevel: number;
+  holdingCompanyManagers: number;
+  holdingCompanyAutomation: number;
+  holdingCompanyMonthlyCost: number;
+
   lifetimeMilestones: string[];
+  playerLevel: number;
+  playerXp: number;
+  lifetimeXp: number;
+  monthlyFeed: string[];
 
   actionsLeft: number;
   recoveryActionsUsed: Record<string, number>;
