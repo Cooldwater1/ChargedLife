@@ -1,5 +1,6 @@
 import { MAX_ENERGY, educationLevels } from "./data";
 import type { LifeStats,
+  GameSettings,
   GameSettings, Origin } from "./types";
 import {
   clamp,

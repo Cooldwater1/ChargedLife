@@ -306,7 +306,9 @@ export type EconomyBreakdown = {
 };
 
 export type LifeStats = {
-  name: string;
+  
+  settings?: GameSettings;
+name: string;
   age: number;
   month: number;
   calendarYear: number;
