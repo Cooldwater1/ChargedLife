@@ -1,0 +1,12 @@
+ChargedLife Pre-Alpha 0.5.7
+
+Access Page Teaser Update:
+- Redesigned the password gate into a premium pre-alpha landing page.
+- Added a stronger public-facing hero message: Build your empire from nothing.
+- Added feature teaser cards for businesses, people management, net worth growth, and bankruptcy risk.
+- Added a Private Tester Access section to make the password feel exclusive.
+- Moved the password field into a secondary "Already have access?" area.
+- Added a Want Access section with a Coming Soon tester access button.
+- Improved wrong-password messaging with a cleaner premium error state.
+- Kept the password as Kazeb and preserved localStorage unlock behavior.
+- Avoided exposing private internal development system names on the public access page.
