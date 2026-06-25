@@ -1,13 +1,13 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-const VERSION = "Pre-Alpha 0.5.7";
-const SAVE_KEY = "chargedlife-save-v0506";
-const OLD_SAVE_KEYS = ["chargedlife-save-v0505", "chargedlife-save-v0504", "chargedlife-save-v0503", "chargedlife-save-v0502", "chargedlife-save-v0501", "chargedlife-save-v0500", "chargedlife-save-v0409", "chargedlife-save-v0408", "chargedlife-save-v0407", "chargedlife-save-v0406", "chargedlife-save-v0405", "chargedlife-save-v0404", "chargedlife-save-v0403", "chargedlife-save-v0402", "chargedlife-save-v0401", "chargedlife-save-v040", "chargedlife-save-v14"];
+const VERSION = "Pre-Alpha 0.6.8";
+const SAVE_KEY = "chargedlife-save-v0600";
+const OLD_SAVE_KEYS = ["chargedlife-save-v0509", "chargedlife-save-v0508", "chargedlife-save-v0507", "chargedlife-save-v0506", "chargedlife-save-v0505", "chargedlife-save-v0504", "chargedlife-save-v0503", "chargedlife-save-v0502", "chargedlife-save-v0501", "chargedlife-save-v0500", "chargedlife-save-v0409", "chargedlife-save-v0408", "chargedlife-save-v0407", "chargedlife-save-v0406", "chargedlife-save-v0405", "chargedlife-save-v0404", "chargedlife-save-v0403", "chargedlife-save-v0402", "chargedlife-save-v0401", "chargedlife-save-v040", "chargedlife-save-v14"];
 const ACCESS_KEY = "chargedlife-access-v0401";
 const ACCESS_PASSWORD = "Kazeb";
-const UI_SCALE_KEY = "chargedlife-ui-scale-v0506";
+const UI_SCALE_KEY = "chargedlife-ui-scale-v0600";
 
 type Section = "Dashboard" | "Empire" | "Invest" | "Career" | "Properties" | "Community" | "Shop" | "Settings";
 type Difficulty = "Easy" | "Normal" | "Hard";
@@ -83,6 +83,9 @@ type CoffeeEmployee = {
   id: string;
   name: string;
   role: CoffeeRole;
+  contractType?: "Full-time" | "Part-time";
+  warnings?: number;
+  status?: string;
   skill: number;
   reliability: number;
   experience: number;
@@ -99,6 +102,14 @@ type CoffeeShiftBlock = {
   end: number;
   employeeIds: string[];
 };
+
+type CoffeeAssignSlot = {
+  businessId: string;
+  weekday: Weekday;
+  shiftId: string;
+  start: number;
+  end: number;
+} | null;
 
 type CoffeeDailyReport = {
   day: number;
@@ -159,6 +170,7 @@ type CoffeeShopData = {
   customerHistory?: number[];
   purchasedUpgrades?: string[];
   grandOpeningUsed?: boolean;
+  staffEvents?: string[];
 };
 
 type PropertyType = {
@@ -533,15 +545,123 @@ function defaultCoffeeShifts(openingHour = 7, closingHour = 19): CoffeeShiftBloc
 
 function defaultCoffeeWeeklyShifts(openingHour = 7, closingHour = 19): Record<Weekday, CoffeeShiftBlock[]> {
   return weekDays.reduce((all, weekday) => {
-    all[weekday] = defaultCoffeeShifts(openingHour, closingHour).map((shift) => ({ ...shift, id: `${weekday}-${shift.id}`, employeeIds: [] }));
+    const isSaturday = weekday === "Saturday";
+    const isSunday = weekday === "Sunday";
+    const dayOpen = isSunday ? 0 : isSaturday ? 8 : (openingHour || 7);
+    const dayClose = isSunday ? 0 : isSaturday ? 18 : (closingHour || 19);
+    all[weekday] = dayOpen === dayClose ? [] : defaultCoffeeShifts(dayOpen, dayClose).map((shift) => ({ ...shift, id: `${weekday}-${shift.id}`, employeeIds: [] }));
+    return all;
+  }, {} as Record<Weekday, CoffeeShiftBlock[]>);
+}
+
+function normalizeCoffeeWeeklySchedule(coffee: CoffeeShopData): Record<Weekday, CoffeeShiftBlock[]> {
+  const defaults = defaultCoffeeWeeklyShifts(coffee.openingHour ?? 7, coffee.closingHour ?? 19);
+  const source = coffee.shiftsByDay;
+  return weekDays.reduce((all, weekday) => {
+    const raw = source?.[weekday];
+    const fallback = defaults[weekday] ?? [];
+    const shifts = Array.isArray(raw) ? raw : fallback;
+    all[weekday] = shifts
+      .filter((shift) => Number.isFinite(shift.start) && Number.isFinite(shift.end) && shift.end > shift.start)
+      .map((shift, index) => ({
+        ...shift,
+        id: String(shift.id || `${weekday}-slot-${index}-${shift.start}-${shift.end}`),
+        start: Math.max(1, Math.min(23, Math.round(shift.start))),
+        end: Math.max(1, Math.min(24, Math.round(shift.end))),
+        employeeIds: Array.from(new Set(Array.isArray(shift.employeeIds) ? shift.employeeIds : [])),
+      }))
+      .filter((shift) => shift.end > shift.start);
     return all;
   }, {} as Record<Weekday, CoffeeShiftBlock[]>);
 }
 
 function activeCoffeeShifts(coffee: CoffeeShopData, dayOrWeekday: number | Weekday) {
   const weekday = typeof dayOrWeekday === "number" ? getWeekday(dayOrWeekday) : dayOrWeekday;
-  const fallback = coffee.shifts?.length ? coffee.shifts : defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
-  return coffee.shiftsByDay?.[weekday]?.length ? coffee.shiftsByDay[weekday] : fallback;
+  const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+  return shiftsByDay[weekday] ?? [];
+}
+
+function coffeeOpenRange(coffee: CoffeeShopData, dayOrWeekday: number | Weekday) {
+  const shifts = activeCoffeeShifts(coffee, dayOrWeekday).filter((shift) => shift.end > shift.start);
+  if (!shifts.length) return { openingHour: coffee.openingHour ?? 7, closingHour: coffee.closingHour ?? 19, closed: true };
+  return {
+    openingHour: Math.min(...shifts.map((shift) => shift.start)),
+    closingHour: Math.max(...shifts.map((shift) => shift.end)),
+    closed: false,
+  };
+}
+
+function coffeeHoursLabel(coffee: CoffeeShopData, dayOrWeekday: number | Weekday) {
+  const range = coffeeOpenRange(coffee, dayOrWeekday);
+  return range.closed ? "Closed" : `${String(range.openingHour).padStart(2, "0")}:00-${String(range.closingHour).padStart(2, "0")}:00`;
+}
+
+
+function coffeeOpenHours(coffee: CoffeeShopData, dayOrWeekday: number | Weekday) {
+  const hours = new Set<number>();
+  activeCoffeeShifts(coffee, dayOrWeekday).forEach((shift) => {
+    for (let hour = Math.max(1, shift.start); hour < Math.min(24, shift.end); hour += 1) {
+      hours.add(hour);
+    }
+  });
+  return hours;
+}
+
+function shiftsFromOpenHours(weekday: Weekday, openHours: number[], previousShifts: CoffeeShiftBlock[] = []) {
+  const sorted = Array.from(new Set(openHours.filter((hour) => hour >= 1 && hour <= 23))).sort((a, b) => a - b);
+  if (!sorted.length) return [];
+
+  const ranges: Array<{ start: number; end: number }> = [];
+  let start = sorted[0];
+  let end = sorted[0] + 1;
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const hour = sorted[index];
+    if (hour === end) {
+      end = hour + 1;
+    } else {
+      ranges.push({ start, end });
+      start = hour;
+      end = hour + 1;
+    }
+  }
+  ranges.push({ start, end });
+
+  const previousEmployeesForRange = (rangeStart: number, rangeEnd: number) => {
+    const ids = new Set<string>();
+    previousShifts.forEach((shift) => {
+      const overlap = Math.max(rangeStart, shift.start) < Math.min(rangeEnd, shift.end);
+      if (overlap && shift.start >= rangeStart && shift.end <= rangeEnd) {
+        shift.employeeIds.forEach((employeeId) => ids.add(employeeId));
+      }
+    });
+    return Array.from(ids);
+  };
+
+  const next: CoffeeShiftBlock[] = [];
+  ranges.forEach((range, rangeIndex) => {
+    const length = range.end - range.start;
+    const splitPoints = length > 12
+      ? [range.start, Math.round((range.start + range.end) / 2), range.end]
+      : length > 8
+        ? [range.start, range.start + 8, range.end]
+        : [range.start, range.end];
+
+    for (let i = 0; i < splitPoints.length - 1; i += 1) {
+      const blockStart = splitPoints[i];
+      const blockEnd = splitPoints[i + 1];
+      if (blockEnd <= blockStart) continue;
+      const id = `${weekday}-slot-${rangeIndex}-${i}-${blockStart}-${blockEnd}`;
+      next.push({
+        id,
+        label: blockStart < 11 ? "Morning" : blockStart < 16 ? "Midday" : "Evening",
+        start: blockStart,
+        end: blockEnd,
+        employeeIds: previousEmployeesForRange(blockStart, blockEnd),
+      });
+    }
+  });
+  return next;
 }
 
 function employeeHoursForShifts(shifts: CoffeeShiftBlock[], employeeId: string) {
@@ -549,21 +669,53 @@ function employeeHoursForShifts(shifts: CoffeeShiftBlock[], employeeId: string) 
 }
 
 function weeklyEmployeeHours(coffee: CoffeeShopData, employeeId: string) {
-  const shiftsByDay = coffee.shiftsByDay ?? defaultCoffeeWeeklyShifts(coffee.openingHour, coffee.closingHour);
+  const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
   return weekDays.reduce((sum, day) => sum + employeeHoursForShifts(shiftsByDay[day] ?? [], employeeId), 0);
 }
 
-function makeCoffeeEmployee(role: CoffeeRole, skill?: number, reliability?: number, wage?: number, takenNames: string[] = []): CoffeeEmployee {
+function coffeeDailyLimit(employee: CoffeeEmployee) {
+  return employee.contractType === "Part-time" ? 5 : 8;
+}
+
+function coffeeWeeklyLimit(employee: CoffeeEmployee) {
+  return employee.contractType === "Part-time" ? 22 : 40;
+}
+
+function coffeePerformanceLabel(employee: CoffeeEmployee, todayHours = 0, weekHours = 0) {
+  const limitPenalty = todayHours > coffeeDailyLimit(employee) || weekHours > coffeeWeeklyLimit(employee) ? 18 : 0;
+  const score = employee.skill * 0.34 + employee.reliability * 0.34 + employee.mood * 0.32 - limitPenalty - (employee.warnings ?? 0) * 6;
+  if (score >= 82) return "Excellent";
+  if (score >= 66) return "Good";
+  if (score >= 48) return "Average";
+  if (score >= 32) return "Poor";
+  return "Problematic";
+}
+
+function coffeeEmployeeStatus(employee: CoffeeEmployee, todayHours = 0, weekHours = 0) {
+  if (todayHours > coffeeDailyLimit(employee) || weekHours > coffeeWeeklyLimit(employee)) return "Overworked";
+  if ((employee.warnings ?? 0) >= 2) return "Needs attention";
+  if (employee.mood < 40) return "Low mood";
+  if (employee.reliability < 45) return "Late recently";
+  if (employee.skill > 78 && employee.mood > 70) return "Excellent service";
+  return employee.status ?? "On time";
+}
+
+function makeCoffeeEmployee(role: CoffeeRole, skill?: number, reliability?: number, wage?: number, takenNames: string[] = [], contractType?: "Full-time" | "Part-time"): CoffeeEmployee {
   const baseSkill = skill ?? Math.round(32 + Math.random() * 48);
   const baseReliability = reliability ?? Math.round(40 + Math.random() * 50);
+  const pickedContract = contractType ?? (Math.random() > 0.55 || role === "Store Manager" ? "Full-time" : "Part-time");
   const rolePremium = role === "Store Manager" ? 15 : role === "Shift Lead" ? 7 : 0;
-  const hourlyWage = wage ?? Math.max(10, Math.round(8 + rolePremium + baseSkill * 0.14 + baseReliability * 0.055));
+  const contractDiscount = pickedContract === "Part-time" ? -3 : 0;
+  const hourlyWage = wage ?? Math.max(9, Math.round(8 + rolePremium + contractDiscount + baseSkill * 0.14 + baseReliability * 0.055));
   const availableNames = coffeeEmployeeNames.filter((name) => !takenNames.includes(name));
   const name = (availableNames.length ? availableNames : coffeeEmployeeNames)[Math.floor(Math.random() * (availableNames.length || coffeeEmployeeNames.length))];
   return {
     id: eventId(),
     name,
     role,
+    contractType: pickedContract,
+    warnings: 0,
+    status: "On time",
     skill: baseSkill,
     reliability: baseReliability,
     experience: Math.round(Math.random() * 20),
@@ -575,9 +727,9 @@ function makeCoffeeEmployee(role: CoffeeRole, skill?: number, reliability?: numb
 }
 
 function generateCoffeeCandidates(existingNames: string[] = []): CoffeeEmployee[] {
-  const first = makeCoffeeEmployee("Barista", Math.round(35 + Math.random() * 28), Math.round(45 + Math.random() * 35), undefined, existingNames);
-  const second = makeCoffeeEmployee(Math.random() > 0.55 ? "Shift Lead" : "Barista", Math.round(55 + Math.random() * 25), Math.round(55 + Math.random() * 35), undefined, [...existingNames, first.name]);
-  const third = makeCoffeeEmployee(Math.random() > 0.5 ? "Store Manager" : "Shift Lead", Math.round(72 + Math.random() * 20), Math.round(70 + Math.random() * 25), undefined, [...existingNames, first.name, second.name]);
+  const first = makeCoffeeEmployee("Barista", Math.round(35 + Math.random() * 28), Math.round(45 + Math.random() * 35), undefined, existingNames, "Part-time");
+  const second = makeCoffeeEmployee(Math.random() > 0.55 ? "Shift Lead" : "Barista", Math.round(55 + Math.random() * 25), Math.round(55 + Math.random() * 35), undefined, [...existingNames, first.name], Math.random() > 0.45 ? "Part-time" : "Full-time");
+  const third = makeCoffeeEmployee(Math.random() > 0.5 ? "Store Manager" : "Shift Lead", Math.round(72 + Math.random() * 20), Math.round(70 + Math.random() * 25), undefined, [...existingNames, first.name, second.name], "Full-time");
   return [first, second, third];
 }
 
@@ -590,13 +742,14 @@ function coffeeHourlyTraffic(coffee: CoffeeShopData, day: number) {
   const weekday = getWeekday(day);
   const weekend = weekday === "Saturday" || weekday === "Sunday";
   const campaign = getCoffeeCampaign(coffee.activeCampaign);
+  const range = coffeeOpenRange(coffee, day);
   return Array.from({ length: 24 }, (_, hour) => {
     let rush = 0;
     if (hour >= 7 && hour < 10) rush += weekend ? 8 : 34;
     if (hour >= 11 && hour < 14) rush += 26;
     if (hour >= 16 && hour < 19) rush += weekend ? 22 : 30;
     if (weekend && hour >= 10 && hour < 16) rush += 30;
-    if (hour < coffee.openingHour || hour >= coffee.closingHour) return 0;
+    if (range.closed || hour < range.openingHour || hour >= range.closingHour) return 0;
     const base = location.traffic * 0.45 + rush + coffee.brandReputation * 0.12 + campaign.boost * 0.35 - location.competition * 0.12;
     return Math.max(0, Math.round(base));
   });
@@ -623,16 +776,27 @@ function coffeePayroll(coffee: CoffeeShopData, dayOrWeekday: number | Weekday = 
   }, 0);
 }
 
-function coffeeCoverage(coffee: CoffeeShopData, day: number) {
-  const traffic = coffeeHourlyTraffic(coffee, day);
-  const shifts = activeCoffeeShifts(coffee, day);
+function coffeeRequiredStaffForHour(coffee: CoffeeShopData, trafficValue: number) {
+  const stage = coffeeExpansionStages.find((item) => item.name === coffee.stage) ?? coffeeExpansionStages[0];
+  const baseNeed = Math.max(1, stage.staffNeed || 1);
+  const trafficExtra = trafficValue >= 118 ? 2 : trafficValue >= 92 ? 1 : 0;
+  return Math.max(1, baseNeed + (baseNeed >= 2 ? trafficExtra : 0));
+}
+
+function coffeeCoverage(coffee: CoffeeShopData, dayOrWeekday: number | Weekday) {
+  const weekday = typeof dayOrWeekday === "number" ? getWeekday(dayOrWeekday) : dayOrWeekday;
+  const trafficDay = typeof dayOrWeekday === "number" ? dayOrWeekday : weekDays.indexOf(weekday) + 1;
+  const traffic = coffeeHourlyTraffic(coffee, trafficDay);
+  const shifts = activeCoffeeShifts(coffee, weekday);
   let checked = 0;
   let score = 0;
-  for (let hour = coffee.openingHour; hour < coffee.closingHour; hour++) {
-    const trafficNeed = Math.max(1, Math.ceil((traffic[hour] ?? 0) / 30));
+  const range = coffeeOpenRange(coffee, weekday);
+  if (range.closed) return 0;
+  for (let hour = range.openingHour; hour < range.closingHour; hour += 1) {
+    const required = coffeeRequiredStaffForHour(coffee, traffic[hour] ?? 0);
     const assigned = shifts.filter((shift) => hour >= shift.start && hour < shift.end).reduce((sum, shift) => sum + shift.employeeIds.length, 0);
-    score += Math.min(1.22, assigned / trafficNeed);
-    checked++;
+    score += Math.min(1, assigned / required);
+    checked += 1;
   }
   return checked ? Math.round((score / checked) * 100) : 0;
 }
@@ -654,7 +818,8 @@ function coffeeCustomerFlow(coffee: CoffeeShopData, day: number) {
   const location = coffeeLocations.find((item) => item.id === clean.locationId) ?? coffeeLocations[1];
   const stage = coffeeExpansionStages.find((item) => item.name === clean.stage) ?? coffeeExpansionStages[0];
   const hourlyTraffic = coffeeHourlyTraffic(clean, day);
-  const rawDemand = hourlyTraffic.slice(clean.openingHour, clean.closingHour).reduce((sum, value) => sum + value, 0);
+  const range = coffeeOpenRange(clean, day);
+  const rawDemand = range.closed ? 0 : hourlyTraffic.slice(range.openingHour, range.closingHour).reduce((sum, value) => sum + value, 0);
   const upgrades = coffeeUpgradeBonus(clean);
   const campaign = getCoffeeCampaign(clean.activeCampaign);
   const campaignBurst = clean.activeCampaign === "opening" && clean.campaignDaysLeft > 0 ? 70 : 0;
@@ -685,7 +850,7 @@ function coffeeShiftDemand(coffee: CoffeeShopData, shift: CoffeeShiftBlock, day:
   const hours = Math.max(1, shift.end - shift.start);
   const trafficTotal = traffic.slice(shift.start, shift.end).reduce((sum, value) => sum + value, 0);
   const avgTraffic = trafficTotal / hours;
-  const required = Math.max(1, Math.ceil(avgTraffic / 36));
+  const required = Math.max(1, Math.ceil(traffic.slice(shift.start, shift.end).reduce((sum, value) => sum + coffeeRequiredStaffForHour(coffee, value), 0) / hours));
   const assigned = shift.employeeIds.length;
   const status = assigned < required ? "Understaffed" : assigned > required + 1 ? "Overstaffed" : "Good";
   return { trafficTotal, avgTraffic, required, assigned, status };
@@ -697,6 +862,9 @@ function migrateCoffeeData(input: CoffeeShopData | undefined, investment = 3200,
     ...employee,
     avatar: employee.avatar ?? coffeeEmployeeAvatars[index % coffeeEmployeeAvatars.length],
     note: employee.note ?? coffeeEmployeeNotes[index % coffeeEmployeeNotes.length],
+    contractType: employee.contractType ?? (employee.role === "Barista" && index % 2 === 1 ? "Part-time" : "Full-time"),
+    warnings: employee.warnings ?? 0,
+    status: employee.status ?? "On time",
   }));
   const openingHour = base.openingHour ?? 7;
   const closingHour = base.closingHour ?? 19;
@@ -705,8 +873,8 @@ function migrateCoffeeData(input: CoffeeShopData | undefined, investment = 3200,
     openingHour,
     closingHour,
     employeesList,
-    shifts: base.shifts?.length ? base.shifts : defaultCoffeeShifts(openingHour, closingHour),
-    shiftsByDay: base.shiftsByDay ?? defaultCoffeeWeeklyShifts(openingHour, closingHour),
+    shifts: activeCoffeeShifts({ ...base, openingHour, closingHour, employeesList } as CoffeeShopData, getWeekday(1)),
+    shiftsByDay: normalizeCoffeeWeeklySchedule({ ...base, openingHour, closingHour, employeesList } as CoffeeShopData),
     activeCampaign: base.activeCampaign ?? "none",
     campaignDaysLeft: base.campaignDaysLeft ?? 0,
     staffCoverage: base.staffCoverage ?? 0,
@@ -717,6 +885,7 @@ function migrateCoffeeData(input: CoffeeShopData | undefined, investment = 3200,
     customerHistory: base.customerHistory ?? [],
     purchasedUpgrades: base.purchasedUpgrades ?? [],
     grandOpeningUsed: base.grandOpeningUsed ?? false,
+    staffEvents: base.staffEvents ?? [],
   };
 }
 
@@ -726,7 +895,6 @@ function createCoffeeData(investment: number, locationId: CoffeeLocationId = "su
   const openingHour = 7;
   const closingHour = 19;
   const shifts = defaultCoffeeShifts(openingHour, closingHour);
-  const firstShiftIds = initialEmployees.map((employee) => employee.id);
   return {
     locationId,
     dailyCustomers: Math.max(10, Math.round(location.traffic * 0.42)),
@@ -749,8 +917,8 @@ function createCoffeeData(investment: number, locationId: CoffeeLocationId = "su
     openingHour,
     closingHour,
     employeesList: initialEmployees,
-    shifts: shifts.map((shift) => ({ ...shift, employeeIds: shift.id === "morning" ? firstShiftIds : initialEmployees.slice(0, 1).map((employee) => employee.id) })),
-    shiftsByDay: weekDays.reduce((all, weekday) => { all[weekday] = defaultCoffeeShifts(openingHour, closingHour).map((shift) => ({ ...shift, id: `${weekday}-${shift.id}`, employeeIds: shift.id === "morning" || weekday === "Saturday" ? firstShiftIds : initialEmployees.slice(0, 1).map((employee) => employee.id) })); return all; }, {} as Record<Weekday, CoffeeShiftBlock[]>),
+    shifts: shifts.map((shift) => ({ ...shift, employeeIds: [] })),
+    shiftsByDay: defaultCoffeeWeeklyShifts(openingHour, closingHour),
     activeCampaign: "none",
     campaignDaysLeft: 0,
     staffCoverage: 82,
@@ -762,6 +930,7 @@ function createCoffeeData(investment: number, locationId: CoffeeLocationId = "su
     customerHistory: [],
     purchasedUpgrades: [],
     grandOpeningUsed: false,
+    staffEvents: [],
   };
 }
 function coffeeCosts(coffee?: CoffeeShopData, dayOrWeekday: number | Weekday = 1) {
@@ -806,11 +975,30 @@ function simulateCoffeeBusiness(business: Business, day = 1): { business: Busine
   let nextSatisfaction = clamp(coffee.satisfaction + (staffScore - 55) / 18 + (staffCoverage - 92) / 26 - pricePressure / 8 + upgrades.quality / 10 + (Math.random() * 3 - 1.5));
   let reviewScore = Math.max(1, Math.min(5, Number((coffee.reviewScore + (nextSatisfaction - 70) / 300 + upgrades.quality / 900 + (Math.random() * 0.08 - 0.04)).toFixed(1))));
   let brandReputation = clamp(coffee.brandReputation + Math.round((reviewScore - 3.3) * 1.3 + (nextCustomers - yesterdayCustomers) / 55));
+  let staffEventText = "";
   let employeesList = employees.map((employee) => {
     const todayHours = employeeHoursForShifts(todayShifts, employee.id);
     const weeklyHours = weeklyEmployeeHours(coffee, employee.id);
-    const fatigue = todayHours > 8 || weeklyHours > 40;
-    return { ...employee, experience: employee.experience + 1, mood: clamp(employee.mood + (fatigue ? -7 : staffCoverage > 125 ? -3 : staffCoverage < 65 ? -2 : 1), 10, 100) };
+    const fatigue = todayHours > coffeeDailyLimit(employee) || weeklyHours > coffeeWeeklyLimit(employee);
+    let status = employee.status ?? "On time";
+    let moodDelta = fatigue ? -7 : staffCoverage > 125 ? -3 : staffCoverage < 65 ? -2 : 1;
+    let reliabilityDelta = 0;
+    if (Math.random() < 0.035 && employee.reliability < 82) {
+      status = "Late recently";
+      moodDelta -= 2;
+      reliabilityDelta -= 1;
+      staffEventText = staffEventText || `${employee.name} arrived late and hurt the rush coverage.`;
+    } else if (Math.random() < 0.03 && employee.skill > 70 && employee.mood > 60) {
+      status = "Excellent service";
+      moodDelta += 3;
+      staffEventText = staffEventText || `${employee.name} delivered excellent service during a rush.`;
+    } else if (Math.random() < 0.025 && employee.mood < 45) {
+      status = "Left early";
+      moodDelta -= 2;
+      reliabilityDelta -= 2;
+      staffEventText = staffEventText || `${employee.name} left early because of low mood.`;
+    }
+    return { ...employee, status, experience: employee.experience + 1, reliability: clamp(employee.reliability + reliabilityDelta), mood: clamp(employee.mood + moodDelta, 10, 100) };
   });
   let event: Omit<GameEvent, "id" | "day"> | undefined;
 
@@ -842,6 +1030,10 @@ function simulateCoffeeBusiness(business: Business, day = 1): { business: Busine
     }
   }
 
+  if (!event && staffEventText) {
+    event = { icon: "👥", title: `${business.name}: ${staffEventText}`, value: "staff", good: !staffEventText.includes("late") && !staffEventText.includes("left") };
+  }
+
   const campaign = getCoffeeCampaign(coffee.activeCampaign);
   const nextCampaignDays = coffee.activeCampaign === "none" ? 0 : campaign.duration >= 9999 ? 9999 : Math.max(0, coffee.campaignDaysLeft - 1);
   const nextCampaign = coffee.activeCampaign === "opening" && nextCampaignDays <= 0 ? "none" : coffee.activeCampaign;
@@ -865,6 +1057,7 @@ function simulateCoffeeBusiness(business: Business, day = 1): { business: Busine
     activeCampaign: nextCampaign,
     lastTrend: nextCustomers - yesterdayCustomers,
     grandOpeningUsed: coffee.grandOpeningUsed || coffee.activeCampaign === "opening",
+    staffEvents: staffEventText ? [staffEventText, ...(coffee.staffEvents ?? [])].slice(0, 8) : (coffee.staffEvents ?? []),
   };
   const revenue = coffeeRevenue(nextCoffeeDraft);
   const costs = coffeeCosts(nextCoffeeDraft, day);
@@ -1210,6 +1403,22 @@ export default function Home() {
   const [coffeeCandidates, setCoffeeCandidates] = useState<CoffeeEmployee[]>([]);
   const [coffeeScheduleDay, setCoffeeScheduleDay] = useState<Weekday>("Monday");
   const [coffeeTab, setCoffeeTab] = useState<CoffeeTab>("Overview");
+  const [coffeeAssignSlot, setCoffeeAssignSlot] = useState<CoffeeAssignSlot>(null);
+  const coffeePlannerScrollRef = useRef<HTMLDivElement | null>(null);
+  const coffeePlannerScrollLeftRef = useRef(0);
+
+  function rememberCoffeePlannerScroll() {
+    if (coffeePlannerScrollRef.current) {
+      coffeePlannerScrollLeftRef.current = coffeePlannerScrollRef.current.scrollLeft;
+    }
+  }
+
+  useLayoutEffect(() => {
+    if (coffeeTab !== "Schedule") return;
+    const node = coffeePlannerScrollRef.current;
+    if (!node) return;
+    node.scrollLeft = coffeePlannerScrollLeftRef.current;
+  }, [game, coffeeTab, coffeeScheduleDay]);
 
   useEffect(() => {
     setHasMounted(true);
@@ -1628,18 +1837,63 @@ export default function Home() {
     });
   }
 
-  function setCoffeeHours(id: string, openingHour: number, closingHour: number) {
+  function setCoffeeHours(id: string, openingHour: number, closingHour: number, weekday: Weekday = coffeeScheduleDay) {
     updateGame((state) => {
       const business = state.businesses.find((b) => b.id === id && b.coffee);
       if (!business || !business.coffee) return state;
       const businesses = state.businesses.map((b) => {
         if (b.id !== id || !b.coffee) return b;
         const coffee = migrateCoffeeData(b.coffee);
-        const shiftsByDay = defaultCoffeeWeeklyShifts(openingHour, closingHour);
-        const shifts = shiftsByDay[getWeekday(state.day)];
-        return { ...b, coffee: { ...coffee, openingHour, closingHour, shifts, shiftsByDay, staffCoverage: coffeeCoverage({ ...coffee, openingHour, closingHour, shifts, shiftsByDay }, state.day) } };
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+        const previousShifts = shiftsByDay[weekday] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
+        const openHours = openingHour === closingHour ? [] : Array.from({ length: Math.max(0, closingHour - openingHour) }, (_, index) => openingHour + index);
+        shiftsByDay[weekday] = shiftsFromOpenHours(weekday, openHours, previousShifts);
+        const currentWeekday = getWeekday(state.day);
+        const currentShifts = shiftsByDay[currentWeekday] ?? coffee.shifts;
+        const currentRange = coffeeOpenRange({ ...coffee, shifts: currentShifts, shiftsByDay }, currentWeekday);
+        const nextCoffee = {
+          ...coffee,
+          openingHour: currentRange.openingHour,
+          closingHour: currentRange.closingHour,
+          shifts: currentShifts,
+          shiftsByDay,
+          staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay, openingHour: currentRange.openingHour, closingHour: currentRange.closingHour }, state.day),
+        };
+        return { ...b, coffee: nextCoffee };
       });
-      return addEvent({ ...state, businesses }, { icon: "🕒", title: `${business.name} changed opening hours to ${String(openingHour).padStart(2, "0")}:00-${String(closingHour).padStart(2, "0")}:00.`, good: true });
+      const label = openingHour === closingHour ? `${weekday} closed` : `${weekday} hours set to ${String(openingHour).padStart(2, "0")}:00-${String(closingHour).padStart(2, "0")}:00`;
+      return addEvent({ ...state, businesses }, { icon: "🕒", title: `${business.name}: ${label}.`, good: true });
+    });
+  }
+
+  function toggleCoffeeOpenHour(id: string, weekday: Weekday, hour: number) {
+    updateGame((state) => {
+      const business = state.businesses.find((b) => b.id === id && b.coffee);
+      if (!business || !business.coffee) return state;
+      const businesses = state.businesses.map((b) => {
+        if (b.id !== id || !b.coffee) return b;
+        const coffee = migrateCoffeeData(b.coffee);
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+        const previousShifts = shiftsByDay[weekday] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
+        const openHours = coffeeOpenHours({ ...coffee, shiftsByDay }, weekday);
+        if (openHours.has(hour)) openHours.delete(hour);
+        else openHours.add(hour);
+        shiftsByDay[weekday] = shiftsFromOpenHours(weekday, Array.from(openHours), previousShifts);
+        const currentWeekday = getWeekday(state.day);
+        const currentShifts = shiftsByDay[currentWeekday] ?? coffee.shifts;
+        const currentRange = coffeeOpenRange({ ...coffee, shifts: currentShifts, shiftsByDay }, currentWeekday);
+        const nextCoffee = {
+          ...coffee,
+          openingHour: currentRange.openingHour,
+          closingHour: currentRange.closingHour,
+          shifts: currentShifts,
+          shiftsByDay,
+          staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay, openingHour: currentRange.openingHour, closingHour: currentRange.closingHour }, state.day),
+        };
+        return { ...b, coffee: nextCoffee };
+      });
+      const status = business.coffee && coffeeOpenHours(migrateCoffeeData(business.coffee), weekday).has(hour) ? "closed" : "opened";
+      return addEvent({ ...state, businesses }, { icon: "🕒", title: `${business.name}: ${weekday} ${String(hour).padStart(2, "0")}:00 hour ${status}.`, good: true });
     });
   }
 
@@ -1647,21 +1901,46 @@ export default function Home() {
     updateGame((state) => {
       const business = state.businesses.find((b) => b.id === id && b.coffee);
       if (!business || !business.coffee) return state;
+      let warning = "";
       const businesses = state.businesses.map((b) => {
         if (b.id !== id || !b.coffee) return b;
         const coffee = migrateCoffeeData(b.coffee);
-        const employees = coffee.employeesList;
-        const sorted = [...employees].sort((a, z) => (z.skill + z.reliability) - (a.skill + a.reliability));
-        const maxPerShift = style === "lean" ? 1 : style === "balanced" ? 2 : 3;
-        const shiftsByDay = { ...(coffee.shiftsByDay ?? defaultCoffeeWeeklyShifts(coffee.openingHour, coffee.closingHour)) };
-        const shifts = (shiftsByDay[coffeeScheduleDay] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour)).map((shift, index) => ({ ...shift, employeeIds: sorted.slice(0, Math.min(sorted.length, maxPerShift + (style === "rush" && index !== 1 ? 1 : 0))).map((employee) => employee.id) }));
-        shiftsByDay[coffeeScheduleDay] = shifts;
-        const currentShifts = shiftsByDay[getWeekday(state.day)] ?? shifts;
+        const employees = [...coffee.employeesList].sort((a, z) => (z.skill + z.reliability + z.mood) - (a.skill + a.reliability + a.mood));
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+        const dayShifts = shiftsByDay[coffeeScheduleDay] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
+        const otherWeekHours = Object.entries(shiftsByDay).reduce((totals, [day, shifts]) => {
+          if (day === coffeeScheduleDay) return totals;
+          shifts.forEach((shift) => {
+            const hours = Math.max(0, shift.end - shift.start);
+            shift.employeeIds.forEach((employeeId) => { totals[employeeId] = (totals[employeeId] ?? 0) + hours; });
+          });
+          return totals;
+        }, {} as Record<string, number>);
+        const dailyHours: Record<string, number> = {};
+        const plannedShifts = dayShifts.map((shift) => {
+          const demand = coffeeShiftDemand(coffee, shift, weekDays.indexOf(coffeeScheduleDay) + 1);
+          const target = style === "lean" ? Math.max(1, demand.required - 1) : style === "balanced" ? demand.required : demand.required + 1;
+          const shiftHours = Math.max(0, shift.end - shift.start);
+          const assigned: string[] = [];
+          for (const employee of employees) {
+            if (assigned.length >= target) break;
+            const nextDaily = (dailyHours[employee.id] ?? 0) + shiftHours;
+            const nextWeekly = (otherWeekHours[employee.id] ?? 0) + nextDaily;
+            if (nextDaily <= coffeeDailyLimit(employee) && nextWeekly <= coffeeWeeklyLimit(employee)) {
+              assigned.push(employee.id);
+              dailyHours[employee.id] = nextDaily;
+            }
+          }
+          if (assigned.length < target) warning = "Not enough staff. Hire more employees for full coverage.";
+          return { ...shift, employeeIds: assigned };
+        });
+        shiftsByDay[coffeeScheduleDay] = plannedShifts;
+        const currentShifts = shiftsByDay[getWeekday(state.day)] ?? plannedShifts;
         const nextCoffee = { ...coffee, shifts: currentShifts, shiftsByDay, staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay }, state.day) };
         return { ...b, coffee: nextCoffee };
       });
       const label = style === "lean" ? "lean payroll" : style === "balanced" ? "balanced coverage" : "rush-hour coverage";
-      return addEvent({ ...state, businesses }, { icon: "📋", title: `${business.name} updated ${coffeeScheduleDay} work planner for ${label}.`, good: true });
+      return addEvent({ ...state, businesses }, { icon: warning ? "⚠" : "📋", title: warning || `${business.name} updated ${coffeeScheduleDay} work planner for ${label}.`, good: !warning });
     });
   }
 
@@ -1670,9 +1949,91 @@ export default function Home() {
       const businesses = state.businesses.map((b) => {
         if (b.id !== id || !b.coffee) return b;
         const coffee = migrateCoffeeData(b.coffee);
-        const shiftsByDay = { ...(coffee.shiftsByDay ?? defaultCoffeeWeeklyShifts(coffee.openingHour, coffee.closingHour)) };
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
         const dayShifts = shiftsByDay[weekday] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
         const shifts = dayShifts.map((shift) => shift.id !== shiftId ? shift : { ...shift, employeeIds: shift.employeeIds.includes(employeeId) ? shift.employeeIds.filter((id) => id !== employeeId) : [...shift.employeeIds, employeeId] });
+        shiftsByDay[weekday] = shifts;
+        const currentShifts = shiftsByDay[getWeekday(state.day)] ?? shifts;
+        return { ...b, coffee: { ...coffee, shifts: currentShifts, shiftsByDay, staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay }, state.day) } };
+      });
+      return { ...state, businesses };
+    });
+  }
+
+  function setCoffeeEmployeeDayShift(id: string, employeeId: string, mode: "off" | "morning" | "midday" | "evening" | "full", weekday: Weekday = coffeeScheduleDay) {
+    updateGame((state) => {
+      const businesses = state.businesses.map((b) => {
+        if (b.id !== id || !b.coffee) return b;
+        const coffee = migrateCoffeeData(b.coffee);
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+        const dayShifts = shiftsByDay[weekday] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
+        let usedHours = 0;
+        const targetIds = new Set<string>();
+        for (const shift of dayShifts) {
+          const baseId = shift.id.split("-").pop() ?? shift.id;
+          const shiftHours = Math.max(0, shift.end - shift.start);
+          const wantsShift = mode === "full" || baseId === mode || shift.id === mode;
+          if (wantsShift && usedHours + shiftHours <= 8) {
+            targetIds.add(shift.id);
+            usedHours += shiftHours;
+          }
+        }
+        const shifts = dayShifts.map((shift) => {
+          const employeeIds = shift.employeeIds.filter((id) => id !== employeeId);
+          if (targetIds.has(shift.id)) employeeIds.push(employeeId);
+          return { ...shift, employeeIds };
+        });
+        shiftsByDay[weekday] = shifts;
+        const currentShifts = shiftsByDay[getWeekday(state.day)] ?? shifts;
+        return { ...b, coffee: { ...coffee, shifts: currentShifts, shiftsByDay, staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay }, state.day) } };
+      });
+      return { ...state, businesses };
+    });
+  }
+
+  function assignCoffeeEmployeeToSlot(id: string, slot: NonNullable<CoffeeAssignSlot>, employeeId: string) {
+    updateGame((state) => {
+      const business = state.businesses.find((b) => b.id === id && b.coffee);
+      if (!business || !business.coffee) return state;
+      let warning = "";
+      const businesses = state.businesses.map((b) => {
+        if (b.id !== id || !b.coffee) return b;
+        const coffee = migrateCoffeeData(b.coffee);
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+        const dayShifts = shiftsByDay[slot.weekday] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
+        const targetShiftId = slot.shiftId;
+        const targetHours = Math.max(0, slot.end - slot.start);
+        const alreadyOverlaps = dayShifts.some((shift) => shift.id !== targetShiftId && shift.employeeIds.includes(employeeId) && Math.max(slot.start, shift.start) < Math.min(slot.end, shift.end));
+        const sameDayHours = employeeHoursForShifts(dayShifts, employeeId);
+        const weekHours = weeklyEmployeeHours(coffee, employeeId);
+        if (alreadyOverlaps) warning = "Employee already has an overlapping shift.";
+        const employee = coffee.employeesList.find((item) => item.id === employeeId);
+        const dayLimit = employee ? coffeeDailyLimit(employee) : 8;
+        const weekLimit = employee ? coffeeWeeklyLimit(employee) : 40;
+        if (!warning && (sameDayHours + targetHours > dayLimit || weekHours + targetHours > weekLimit)) warning = "That employee would be over the normal hour limit.";
+        if (warning && !confirm(`${warning} Assign anyway?`)) return b;
+        const shifts = dayShifts.map((shift) => {
+          if (shift.id !== targetShiftId) return shift;
+          return { ...shift, employeeIds: shift.employeeIds.includes(employeeId) ? shift.employeeIds : [...shift.employeeIds, employeeId] };
+        });
+        shiftsByDay[slot.weekday] = shifts;
+        const currentShifts = shiftsByDay[getWeekday(state.day)] ?? shifts;
+        return { ...b, coffee: { ...coffee, shifts: currentShifts, shiftsByDay, staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay }, state.day) } };
+      });
+      const employee = business.coffee.employeesList.find((item) => item.id === employeeId);
+      setCoffeeAssignSlot(null);
+      return addEvent({ ...state, businesses }, { icon: "📋", title: `${employee?.name ?? "Employee"} scheduled for ${slot.weekday}.`, good: !warning });
+    });
+  }
+
+  function removeCoffeeEmployeeFromShift(id: string, weekday: Weekday, shiftId: string, employeeId: string) {
+    updateGame((state) => {
+      const businesses = state.businesses.map((b) => {
+        if (b.id !== id || !b.coffee) return b;
+        const coffee = migrateCoffeeData(b.coffee);
+        const shiftsByDay = normalizeCoffeeWeeklySchedule(coffee);
+        const dayShifts = shiftsByDay[weekday] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour);
+        const shifts = dayShifts.map((shift) => shift.id === shiftId ? { ...shift, employeeIds: shift.employeeIds.filter((id) => id !== employeeId) } : shift);
         shiftsByDay[weekday] = shifts;
         const currentShifts = shiftsByDay[getWeekday(state.day)] ?? shifts;
         return { ...b, coffee: { ...coffee, shifts: currentShifts, shiftsByDay, staffCoverage: coffeeCoverage({ ...coffee, shifts: currentShifts, shiftsByDay }, state.day) } };
@@ -1690,12 +2051,40 @@ export default function Home() {
         if (b.id !== id || !b.coffee) return b;
         const coffee = migrateCoffeeData(b.coffee);
         const employeesList = coffee.employeesList.filter((e) => e.id !== employeeId);
-        const shiftsByDay = Object.fromEntries(weekDays.map((day) => [day, (coffee.shiftsByDay?.[day] ?? defaultCoffeeShifts(coffee.openingHour, coffee.closingHour)).map((shift) => ({ ...shift, employeeIds: shift.employeeIds.filter((assigned) => assigned !== employeeId) }))])) as Record<Weekday, CoffeeShiftBlock[]>;
+        const shiftsByDay = Object.fromEntries(weekDays.map((day) => [day, (normalizeCoffeeWeeklySchedule(coffee)[day] ?? []).map((shift) => ({ ...shift, employeeIds: shift.employeeIds.filter((assigned) => assigned !== employeeId) }))])) as Record<Weekday, CoffeeShiftBlock[]>;
         const currentShifts = shiftsByDay[getWeekday(state.day)];
         const nextCoffee = { ...coffee, employeesList, shifts: currentShifts, shiftsByDay, baristas: employeesList.filter((e) => e.role === "Barista").length, shiftLeads: employeesList.filter((e) => e.role === "Shift Lead").length, managers: employeesList.filter((e) => e.role === "Store Manager").length, staffQuality: clamp(employeesList.reduce((sum, e) => sum + e.skill + e.reliability, 0) / Math.max(1, employeesList.length * 2)), satisfaction: clamp(coffee.satisfaction - 2), brandReputation: clamp(coffee.brandReputation - 1) };
         return { ...b, coffee: nextCoffee, employees: employeesList.length, operations: clamp((nextCoffee.satisfaction + nextCoffee.staffQuality + nextCoffee.staffCoverage) / 3) };
       });
       return addEvent({ ...state, businesses }, { icon: "👋", title: `${employee?.name ?? "An employee"} was fired from ${business.name}.`, value: "Payroll reduced", good: false });
+    });
+  }
+
+  function manageCoffeeEmployee(id: string, employeeId: string, action: "motivate" | "talk" | "warn" | "train") {
+    updateGame((state) => {
+      const business = state.businesses.find((b) => b.id === id && b.coffee);
+      if (!business || !business.coffee) return state;
+      const coffeeBefore = migrateCoffeeData(business.coffee);
+      const employeeBefore = coffeeBefore.employeesList.find((item) => item.id === employeeId);
+      if (!employeeBefore) return state;
+      const costs = { motivate: 60, talk: 0, warn: 0, train: 260 };
+      const charged = costs[action] > 0 ? chargeBusinessAccount(state, id, costs[action]) : { state, personalUsed: 0 };
+      const actionLabel = action === "motivate" ? "motivated" : action === "talk" ? "talked to" : action === "warn" ? "warned" : "trained";
+      const businesses = charged.state.businesses.map((b) => {
+        if (b.id !== id || !b.coffee) return b;
+        const coffee = migrateCoffeeData(b.coffee);
+        const employeesList = coffee.employeesList.map((employee) => {
+          if (employee.id !== employeeId) return employee;
+          if (action === "motivate") return { ...employee, mood: clamp(employee.mood + 10), status: "Motivated" };
+          if (action === "talk") return { ...employee, mood: clamp(employee.mood + 5), reliability: clamp(employee.reliability + 3), status: "Talked to" };
+          if (action === "warn") return { ...employee, mood: clamp(employee.mood - 6), reliability: clamp(employee.reliability + 5), warnings: (employee.warnings ?? 0) + 1, status: "Warned" };
+          return { ...employee, skill: clamp(employee.skill + 5), experience: employee.experience + 3, status: "Training" };
+        });
+        const staffEvents = [`${employeeBefore.name} was ${actionLabel}.`, ...(coffee.staffEvents ?? [])].slice(0, 8);
+        const nextCoffee = { ...coffee, employeesList, staffEvents, staffQuality: clamp(employeesList.reduce((sum, e) => sum + e.skill + e.reliability + e.mood, 0) / Math.max(1, employeesList.length * 3)) };
+        return { ...b, coffee: nextCoffee };
+      });
+      return addEvent({ ...charged.state, businesses }, { icon: action === "warn" ? "⚠" : "👥", title: `${business.name}: ${employeeBefore.name} was ${actionLabel}.`, value: costs[action] ? `-${money(costs[action])}${charged.personalUsed ? " • personal funds used" : ""}` : "Staff management", good: action !== "warn" });
     });
   }
 
@@ -1955,6 +2344,7 @@ export default function Home() {
       {showBusinessModal && CreateBusinessModal()}
       {showPropertyModal && BuyPropertyModal()}
       {coffeeHiringBusinessId && CoffeeHiringModal()}
+      {coffeeAssignSlot && CoffeeAssignModal()}
     </main>
   );
 
@@ -2358,25 +2748,38 @@ export default function Home() {
     }
 
     function CustomerFlowCard() {
-      return <section className="glass insightPanel compactInsightPanel">
+      const flowItems = [
+        { label: "Potential Customers", value: flow.potentialCustomers, tone: "neutral", note: "Location + awareness" },
+        { label: "Lost to Competition", value: -flow.lostCompetition, tone: "bad", note: "Nearby alternatives" },
+        { label: "Lost to Long Wait", value: -flow.lostLongWait, tone: "bad", note: "Staffing / speed" },
+        { label: "Lost to High Prices", value: -flow.lostHighPrices, tone: "warn", note: "Price sensitivity" },
+        { label: "Actual Customers", value: flow.actualCustomers, tone: "good", note: "Served today" },
+      ];
+      return <section className="glass insightPanel compactInsightPanel customerFlowPanel">
         <div className="sectionHeader"><h3>🧭 Customer Flow</h3><small>See exactly why customers came or left.</small></div>
-        <div className="flowGrid">
-          <Detail label="Potential Customers" value={String(flow.potentialCustomers)} />
-          <Detail label="Lost to Competition" value={`-${flow.lostCompetition}`} bad />
-          <Detail label="Lost to Long Wait" value={`-${flow.lostLongWait}`} bad />
-          <Detail label="Lost to High Prices" value={`-${flow.lostHighPrices}`} bad />
-          <Detail label="Actual Customers" value={String(flow.actualCustomers)} good />
+        <div className="flowListClean">
+          {flowItems.map((item) => <div className={`flowItemClean ${item.tone}`} key={item.label}>
+            <div><b>{item.label}</b><small>{item.note}</small></div>
+            <strong>{item.value > 0 ? "+" : ""}{item.value}</strong>
+          </div>)}
         </div>
       </section>;
     }
 
     function TrendCard() {
-      return <section className="glass insightPanel compactInsightPanel trendPanelSafe">
-        <div className="sectionHeader"><h3>📈 7-Day Trend</h3><small>Customers • Revenue • Profit</small></div>
-        <div className="trendRows">
-          <div><b>Customers</b><div className="trendBars">{(cleanCoffee.customerHistory?.length ? cleanCoffee.customerHistory.slice(-7) : [cleanCoffee.dailyCustomers]).map((value, index) => <i key={index} style={{ height: trendBarHeight(value, maxCustomers) }} />)}</div></div>
-          <div><b>Revenue</b><div className="trendBars greenBars">{(cleanCoffee.revenueHistory?.length ? cleanCoffee.revenueHistory.slice(-7) : [revenue]).map((value, index) => <i key={index} style={{ height: trendBarHeight(value, maxRevenue) }} />)}</div></div>
-          <div><b>Profit</b><div className="trendBars profitBars">{(cleanCoffee.profitHistory?.length ? cleanCoffee.profitHistory.slice(-7) : [profit]).map((value, index) => <i key={index} className={value >= 0 ? "positiveBar" : "negativeBar"} style={{ height: trendBarHeight(value, maxProfit) }} />)}</div></div>
+      const trendSeries = [
+        { label: "Customers", values: cleanCoffee.customerHistory?.length ? cleanCoffee.customerHistory.slice(-7) : [cleanCoffee.dailyCustomers], max: maxCustomers, moneyValue: false },
+        { label: "Revenue", values: cleanCoffee.revenueHistory?.length ? cleanCoffee.revenueHistory.slice(-7) : [revenue], max: maxRevenue, moneyValue: true },
+        { label: "Profit", values: cleanCoffee.profitHistory?.length ? cleanCoffee.profitHistory.slice(-7) : [profit], max: maxProfit, moneyValue: true, profit: true },
+      ];
+      return <section className="glass insightPanel compactInsightPanel trendPanelSafe trendPanelClean">
+        <div className="sectionHeader"><h3>📈 7-Day Trend</h3><small>Real daily history, not placeholders.</small></div>
+        <div className="trendMiniGrid">
+          {trendSeries.map((series) => <div className="trendMiniCard" key={series.label}>
+            <div className="trendMiniHeader"><b>{series.label}</b><small>{series.values.length} day history</small></div>
+            <div className="trendMiniBars">{series.values.map((value, index) => <span key={index} title={`${series.label}: ${series.moneyValue ? money(value) : value}`} className={series.profit ? value >= 0 ? "profitPositive" : "profitNegative" : series.label === "Revenue" ? "revenueBar" : "customerBar"} style={{ height: trendBarHeight(value, series.max) }} />)}</div>
+            <div className="trendMiniValues">{series.values.map((value, index) => <em key={index}>{series.moneyValue ? money(value) : value}</em>)}</div>
+          </div>)}
         </div>
       </section>;
     }
@@ -2412,45 +2815,162 @@ export default function Home() {
     }
 
     function StaffTab() {
-      return <div className="coffeeTabPane">
-        <div className="sectionHeader bigHeader"><div><h2>👥 Staff</h2><p>Employees affect speed, service, satisfaction, and payroll.</p></div><button className="softButton alwaysVisible" onClick={() => openCoffeeHiring(business.id)}>Open Hiring</button></div>
-        <div className="employeeRoster employeeRosterV3">{employees.length ? employees.map((employee) => {
+      const staffEvents = cleanCoffee.staffEvents ?? [];
+      return <div className="coffeeTabPane staffManagementPane">
+        <div className="sectionHeader bigHeader"><div><h2>👥 Staff Management</h2><p>Manage hiring, contracts, performance, warnings, training, motivation, and firing.</p></div><button className="softButton alwaysVisible" onClick={() => openCoffeeHiring(business.id)}>Open Hiring</button></div>
+        <div className="staffSummaryGrid">
+          <Detail label="Employees" value={`${employees.length}`} />
+          <Detail label="Full-time" value={`${employees.filter((employee) => (employee.contractType ?? "Full-time") === "Full-time").length}`} />
+          <Detail label="Part-time" value={`${employees.filter((employee) => employee.contractType === "Part-time").length}`} />
+          <Detail label="Staff Quality" value={`${Math.round(cleanCoffee.staffQuality)}%`} />
+        </div>
+        <div className="employeeRoster employeeRosterV4">{employees.length ? employees.map((employee) => {
           const todayHours = employeeHoursForShifts(activeShiftsForToday, employee.id);
           const weekHours = weeklyEmployeeHours(cleanCoffee, employee.id);
-          const overworked = todayHours > 8 || weekHours > 40;
-          return <article className={`employeeCard employeeCardV3 ${overworked ? "overworked" : ""}`} key={employee.id}>
-            <div className="employeeAvatar bigEmployeeAvatar">{employee.avatar}</div>
-            <div className="employeeMain"><h3>{employee.name}</h3><p>{employee.role} • {employee.note}</p><div className="employeeBars"><span>Skill <b>{employee.skill}</b></span><ProgressBar value={employee.skill} tone="blue" /><span>Reliability <b>{employee.reliability}</b></span><ProgressBar value={employee.reliability} tone="green" /><span>Mood <b>{employee.mood}</b></span><ProgressBar value={employee.mood} tone={employee.mood < 45 ? "red" : "gold"} /></div></div>
-            <div className="employeeNumbers"><Detail label="Wage" value={`${money(employee.hourlyWage)}/hr`} /><Detail label="Today" value={`${todayHours}h / 8h`} bad={todayHours > 8} good={todayHours <= 8} /><Detail label="Week" value={`${weekHours}h / 40h`} bad={weekHours > 40} good={weekHours <= 40} /></div>
-            <div className="employeeActions"><button onClick={() => trainCoffeeTeam(business.id, employee.role === "Store Manager" ? "leadership" : employee.role === "Shift Lead" ? "service" : "coffee")}>Train</button><button className="sellButton" onClick={() => { if (confirm(`Fire ${employee.name}? This removes them from every schedule.`)) fireCoffeeEmployee(business.id, employee.id); }}>Fire</button></div>
-            {overworked && <div className="employeeWarning">⚠ Overworked: performance and mood may drop.</div>}
+          const dailyLimit = coffeeDailyLimit(employee);
+          const weeklyLimit = coffeeWeeklyLimit(employee);
+          const overworked = todayHours > dailyLimit || weekHours > weeklyLimit;
+          const lowMood = employee.mood < 45;
+          const performance = coffeePerformanceLabel(employee, todayHours, weekHours);
+          const status = coffeeEmployeeStatus(employee, todayHours, weekHours);
+          return <article className={`employeeCard employeeCardV4 ${overworked || performance === "Problematic" ? "needsAttention" : ""}`} key={employee.id}>
+            <div className="employeeV4Top">
+              <div className="employeeAvatar premiumEmployeeAvatar">{employee.avatar}</div>
+              <div className="employeeV4Identity"><h3>{employee.name}</h3><p>{employee.contractType ?? "Full-time"} {employee.role}</p><small>{employee.note}</small></div>
+              <span className={performance === "Excellent" || performance === "Good" ? "statusBadge good" : performance === "Average" ? "statusBadge warn" : "statusBadge bad"}>{performance}</span>
+            </div>
+            <div className="employeeV4Stats">
+              <div><span>Wage</span><b>{money(employee.hourlyWage)}/hr</b></div>
+              <div className={todayHours > dailyLimit ? "badBox" : "goodBox"}><span>Today</span><b>{todayHours}h / {dailyLimit}h</b></div>
+              <div className={weekHours > weeklyLimit ? "badBox" : "goodBox"}><span>Week</span><b>{weekHours}h / {weeklyLimit}h</b></div>
+              <div><span>Status</span><b>{status}</b></div>
+            </div>
+            <div className="employeeBars cleanBars employeeV4Bars">
+              <span>Skill <b>{employee.skill}</b></span><ProgressBar value={employee.skill} tone="blue" />
+              <span>Reliability <b>{employee.reliability}</b></span><ProgressBar value={employee.reliability} tone="green" />
+              <span>Mood <b>{employee.mood}</b></span><ProgressBar value={employee.mood} tone={employee.mood < 45 ? "red" : "gold"} />
+            </div>
+            {(overworked || lowMood || (employee.warnings ?? 0) > 0) && <div className="employeeWarning compactWarning">⚠ {overworked ? "Overworked. Reduce hours or hire part-time help." : lowMood ? "Low mood can cause bad service or late arrivals." : `${employee.warnings} warning(s) on record.`}</div>}
+            <div className="employeeActionRow employeeActionRowV4">
+              <button className="softButton" onClick={() => manageCoffeeEmployee(business.id, employee.id, "train")}>Train</button>
+              <button className="softButton" onClick={() => manageCoffeeEmployee(business.id, employee.id, "motivate")}>Motivate</button>
+              <button className="softButton" onClick={() => manageCoffeeEmployee(business.id, employee.id, "talk")}>Talk To</button>
+              <button className="warnButton" onClick={() => manageCoffeeEmployee(business.id, employee.id, "warn")}>Warn</button>
+              <button className="sellButton" onClick={() => { if (confirm(`Fire ${employee.name}? This removes them from every schedule.`)) fireCoffeeEmployee(business.id, employee.id); }}>Fire</button>
+            </div>
           </article>;
-        }) : <div className="emptyHero"><h3>No employees yet</h3><p>Hire staff to serve customers and avoid long wait times.</p><button className="nextButton" onClick={() => openCoffeeHiring(business.id)}>Open Hiring</button></div>}</div>
+        }) : <div className="emptyHero"><h3>No employees yet</h3><p>Hire staff to serve customers and avoid long wait times. Part-time workers are great for rush coverage.</p><button className="nextButton" onClick={() => openCoffeeHiring(business.id)}>Open Hiring</button></div>}</div>
+        <section className="glass staffIssueLog"><div className="sectionHeader"><h3>📝 Recent Staff Events</h3><small>Staff behavior affects customers, service, and reputation.</small></div>{staffEvents.length ? staffEvents.slice(0, 6).map((event, index) => <div className="staffIssue" key={`${event}-${index}`}><span>👥</span><p>{event}</p></div>) : <p className="muted">No staff issues yet. Run a few days or manage employees to build a staff history.</p>}</section>
         <div className="miniButtons trainingButtons"><button onClick={() => trainCoffeeTeam(business.id, "basic")}>Basic Training</button><button onClick={() => trainCoffeeTeam(business.id, "service")}>Service Training</button><button onClick={() => trainCoffeeTeam(business.id, "coffee")}>Coffee Training</button><button onClick={() => trainCoffeeTeam(business.id, "leadership")}>Leadership</button></div>
       </div>;
     }
 
     function ScheduleTab() {
-      const selectedTraffic = coffeeHourlyTraffic(cleanCoffee, weekDays.indexOf(coffeeScheduleDay) + 1);
-      const peak = selectedTraffic.map((value, hour) => ({ value, hour })).sort((a, b) => b.value - a.value).slice(0, 2).map((item) => `${String(item.hour).padStart(2, "0")}:00`).join(", ");
-      return <div className="coffeeTabPane">
-        <div className="sectionHeader bigHeader"><div><h2>📋 Schedule</h2><p>Plan each weekday around traffic. Understaff rush hours lose customers; overstaff quiet hours kills profit.</p></div></div>
-        <div className="miniButtons weekdayButtons coffeeWeekTabs">{weekDays.map((day) => <button key={day} className={coffeeScheduleDay === day ? "activeMini" : ""} onClick={() => setCoffeeScheduleDay(day)}>{day.slice(0, 3)}</button>)}</div>
-        <div className="plannerSummary plannerSummaryV3"><Detail label="Planning Day" value={coffeeScheduleDay} /><Detail label="Opening Hours" value={`${String(cleanCoffee.openingHour).padStart(2, "0")}:00-${String(cleanCoffee.closingHour).padStart(2, "0")}:00`} /><Detail label="Today's Traffic" value={todayTrafficLabel} /><Detail label="Peak Hours" value={peak || "Closed"} /><Detail label="Estimated Customers" value={String(liveFlow.actualCustomers)} /><Detail label="Scheduled Payroll" value={`-${money(plannerPayroll)}`} bad /><Detail label="Coverage" value={`${coffeeCoverage({ ...cleanCoffee, shifts: plannerShifts }, activeGame.day)}%`} /><Detail label="Max Hours" value="8h/day • 40h/week" /></div>
-        <div className="hoursButtons compactHoursButtons">{[[6, 18], [7, 19], [8, 22], [6, 22]].map(([open, close]) => <button key={`${open}-${close}`} className={cleanCoffee.openingHour === open && cleanCoffee.closingHour === close ? "tierCard active" : "tierCard"} onClick={() => setCoffeeHours(business.id, open, close)}><b>{String(open).padStart(2, "0")}:00-{String(close).padStart(2, "0")}:00</b><small>{close - open} open hours</small></button>)}</div>
-        <section className="glass insightPanel compactInsightPanel"><div className="sectionHeader"><h3>🕒 Hourly Traffic</h3><small>Use this to schedule workers around demand.</small></div><div className="trafficHeatmap compactHeatmap">{Array.from({ length: 17 }, (_, i) => i + 6).map((hour) => { const value = selectedTraffic[hour] ?? 0; return <div key={hour} className="heatmapRow"><span>{String(hour).padStart(2, "0")}:00</span><div><i style={{ width: `${Math.min(100, value)}%` }} /></div><b>{trafficLabelFromValue(value)}</b></div>; })}</div></section>
-        <div className="plannerShiftGrid plannerShiftGridV3">{plannerShifts.map((shift) => {
-          const demand = coffeeShiftDemand(cleanCoffee, shift, activeGame.day);
-          const statusClass = demand.status.toLowerCase();
-          const assignedNames = shift.employeeIds.map((id) => employees.find((employee) => employee.id === id)).filter(Boolean) as CoffeeEmployee[];
-          return <article key={shift.id} className={`plannerShiftCard ${statusClass}`}>
-            <div className="plannerShiftHead"><div><b>{shift.label}</b><span>{String(shift.start).padStart(2, "0")}:00-{String(shift.end).padStart(2, "0")}:00</span></div><strong>{demand.status}</strong></div>
-            <div className="shiftDemandGrid"><Detail label="Traffic" value={trafficLabelFromValue(demand.avgTraffic)} /><Detail label="Required" value={String(demand.required)} /><Detail label="Assigned" value={String(demand.assigned)} /></div>
-            <div className="assignedList"><b>Assigned</b>{assignedNames.length ? assignedNames.map((employee) => { const todayHours = employeeHoursForShifts(plannerShifts, employee.id); const weekHours = weeklyEmployeeHours(cleanCoffee, employee.id); return <button type="button" key={employee.id} className="employeePill selected" onClick={() => toggleCoffeeShiftEmployee(business.id, shift.id, employee.id, coffeeScheduleDay)}><span>{employee.avatar} {employee.name}</span><small>{employee.role}</small>{(todayHours > 8 || weekHours > 40) && <em>⚠ Overworked</em>}</button>; }) : <p className="muted">No employees assigned.</p>}</div>
-            <div className="assignPool"><b>Add / Remove</b>{employees.map((employee) => <button type="button" key={employee.id} className={shift.employeeIds.includes(employee.id) ? "employeePill selected" : "employeePill"} onClick={() => toggleCoffeeShiftEmployee(business.id, shift.id, employee.id, coffeeScheduleDay)}><span>{employee.avatar} {employee.name}</span><small>{money(employee.hourlyWage)}/hr</small></button>)}</div>
-          </article>;
-        })}</div>
-        <div className="miniButtons"><button onClick={() => autoPlanCoffeeShifts(business.id, "lean")}>Lean Payroll</button><button onClick={() => autoPlanCoffeeShifts(business.id, "balanced")}>Balanced Coverage</button><button onClick={() => autoPlanCoffeeShifts(business.id, "rush")}>Rush Coverage</button></div>
+      const hours = Array.from({ length: 23 }, (_, index) => index + 1);
+      const weekSchedule = weekDays.map((day) => {
+        const shifts = activeCoffeeShifts(cleanCoffee, day);
+        const range = coffeeOpenRange(cleanCoffee, day);
+        const traffic = coffeeHourlyTraffic(cleanCoffee, weekDays.indexOf(day) + 1);
+        const payroll = coffeePayroll(cleanCoffee, day);
+        const coverage = coffeeCoverage({ ...cleanCoffee, shifts }, weekDays.indexOf(day) + 1);
+        return { day, shifts, range, traffic, payroll, coverage };
+      });
+      const selectedData = weekSchedule.find((item) => item.day === coffeeScheduleDay) ?? weekSchedule[0];
+      const selectedOpenHours = coffeeOpenHours({ ...cleanCoffee, shiftsByDay: { ...(cleanCoffee.shiftsByDay ?? defaultCoffeeWeeklyShifts(cleanCoffee.openingHour, cleanCoffee.closingHour)), [coffeeScheduleDay]: selectedData.shifts } }, coffeeScheduleDay);
+      const selectedShifts = selectedData.shifts;
+      const coverageLines = selectedShifts.map((shift) => {
+        const demand = coffeeShiftDemand(cleanCoffee, shift, weekDays.indexOf(coffeeScheduleDay) + 1);
+        return { ...demand, label: shift.label, id: shift.id };
+      });
+      const shortage = coverageLines.some((item) => item.assigned < item.required);
+      const selectedHasStaff = selectedShifts.some((shift) => shift.employeeIds.length > 0);
+      const selectedNoStaffWarning = !selectedData.range.closed && !selectedHasStaff;
+      const selectedStatusText = selectedData.range.closed ? `${coffeeScheduleDay} is closed` : `${coffeeScheduleDay} is open ${coffeeHoursLabel(cleanCoffee, coffeeScheduleDay)}`;
+
+      return <div className="coffeeTabPane schedulePlannerV5">
+        <div className="sectionHeader bigHeader"><div><h2>📅 Staff Planner</h2><p>Plan opening hours and assign staff per day. Part-time workers are useful for rush-hour gaps.</p></div></div>
+        <section className="glass weeklyPlannerShell plannerCleanV5">
+          <div className="plannerTopBar plannerControlBar066">
+            <div className="plannerControlMain">
+              <small>Editing {coffeeScheduleDay}</small>
+              <b>{selectedData.range.closed ? `${coffeeScheduleDay} is closed` : `${coffeeScheduleDay} • Open ${coffeeHoursLabel(cleanCoffee, coffeeScheduleDay)}`}</b>
+              <div className="plannerChipRow">
+                <span className={selectedData.coverage <= 0 ? "scheduleChip warn" : selectedData.coverage < 75 ? "scheduleChip bad" : "scheduleChip good"}>Coverage {selectedData.coverage}%</span>
+                <span className="scheduleChip">Payroll {selectedData.payroll > 0 ? `-${money(selectedData.payroll)}` : money(0)}</span>
+                <span className="scheduleChip">Hours {selectedData.range.closed ? "Closed" : coffeeHoursLabel(cleanCoffee, coffeeScheduleDay)}</span>
+                <span className={selectedNoStaffWarning ? "scheduleChip warn" : selectedData.range.closed ? "scheduleChip muted" : "scheduleChip good"}>{selectedNoStaffWarning ? "Needs Staff" : selectedData.range.closed ? "Closed" : "Ready"}</span>
+              </div>
+              {selectedNoStaffWarning && <div className="plannerNoStaffWarning compactPlannerWarning">⚠ Open with no staff — customers may leave due to long wait times.</div>}
+              <p className="plannerHelpText">Viewing the full week. Editing only {coffeeScheduleDay}. Other days are muted so you can compare without confusion.</p>
+            </div>
+            <div className="presetPanel presetPanel066"><small>Quick presets for {coffeeScheduleDay}</small><div className="hoursPresetButtons compactPresetButtons">
+              <button className={selectedData.range.closed ? "activeMini" : ""} onClick={() => { rememberCoffeePlannerScroll(); setCoffeeHours(business.id, 0, 0, coffeeScheduleDay); }}>Closed</button>
+              {[[6, 18], [7, 19], [8, 22], [6, 22]].map(([open, close]) => <button key={`${open}-${close}`} className={!selectedData.range.closed && selectedData.range.openingHour === open && selectedData.range.closingHour === close ? "activeMini" : ""} onClick={() => { rememberCoffeePlannerScroll(); setCoffeeHours(business.id, open, close, coffeeScheduleDay); }}>{String(open).padStart(2, "0")}-{String(close).padStart(2, "0")}</button>)}
+            </div></div>
+          </div>
+          <div className="weeklyPlannerScroll" ref={coffeePlannerScrollRef} onScroll={(event) => { coffeePlannerScrollLeftRef.current = event.currentTarget.scrollLeft; }}>
+            <div className="weeklyPlannerGrid plannerGridWithOpeningRow">
+              <div className="plannerHeaderCell">Day</div>
+              <div className="plannerHourHeader">{hours.map((hour) => <span key={hour}>{String(hour).padStart(2, "0")}</span>)}</div>
+              <div className="plannerOpeningLabel"><b>Open Hours</b><small>{selectedData.range.closed ? "Closed" : `Click boxes to edit ${coffeeScheduleDay}`}</small></div>
+              <div className={selectedData.range.closed ? "plannerOpeningControlRow closed" : "plannerOpeningControlRow"}>
+                {hours.map((hour) => {
+                  const open = selectedOpenHours.has(hour);
+                  return <button
+                    key={`selected-hour-${hour}`}
+                    className={open ? "openingHourBox active" : "openingHourBox"}
+                    onClick={() => { rememberCoffeePlannerScroll(); toggleCoffeeOpenHour(business.id, coffeeScheduleDay, hour); }}
+                    title={open ? `Close ${coffeeScheduleDay} at ${String(hour).padStart(2, "0")}:00` : `Open ${coffeeScheduleDay} at ${String(hour).padStart(2, "0")}:00`}
+                  />;
+                })}
+              </div>
+              {weekSchedule.map(({ day, shifts, range }) => {
+                const isSelected = coffeeScheduleDay === day;
+                const openHours = coffeeOpenHours({ ...cleanCoffee, shiftsByDay: { ...(cleanCoffee.shiftsByDay ?? defaultCoffeeWeeklyShifts(cleanCoffee.openingHour, cleanCoffee.closingHour)), [day]: shifts } }, day);
+                const dayHasStaff = shifts.some((shift) => shift.employeeIds.length > 0);
+                const rowStateClass = range.closed ? "closed" : dayHasStaff ? "staffed" : "needsStaff";
+                return <div className={`plannerDayRow ${rowStateClass} ${isSelected ? "selectedRow" : "mutedRow"}`} key={day}>
+                  <div className={isSelected ? `plannerDayLabel selected ${rowStateClass}` : `plannerDayLabel muted ${rowStateClass}`} onClick={() => { rememberCoffeePlannerScroll(); setCoffeeScheduleDay(day); }}>
+                    <b>{day}</b>
+                    <button className={range.closed ? "dayToggle closed" : "dayToggle"} onClick={(event) => { event.stopPropagation(); rememberCoffeePlannerScroll(); setCoffeeScheduleDay(day); setCoffeeHours(business.id, range.closed ? 7 : 0, range.closed ? 19 : 0, day); }}>{range.closed ? "Closed" : "Open"}<i /></button>
+                  </div>
+                  <div className={range.closed ? `plannerTimelineRow closed ${isSelected ? "selectedTimeline" : "mutedTimeline"}` : `plannerTimelineRow ${isSelected ? "selectedTimeline" : "mutedTimeline"} ${rowStateClass}`}>
+                    {hours.map((hour) => {
+                      const open = openHours.has(hour);
+                      return <div key={hour} className={open ? "plannerHourCell open scheduleHourVisualCell" : "plannerHourCell locked scheduleHourVisualCell"} title={open ? `Open at ${String(hour).padStart(2, "0")}:00` : `Closed at ${String(hour).padStart(2, "0")}:00`} />;
+                    })}
+                    {!range.closed && shifts.map((shift) => {
+                      const left = `${((Math.max(1, shift.start) - 1) / 23) * 100}%`;
+                      const width = `${(Math.max(1, Math.min(23, shift.end) - Math.max(1, shift.start)) / 23) * 100}%`;
+                      const assignedEmployees = shift.employeeIds.map((id) => employees.find((employee) => employee.id === id)).filter(Boolean) as CoffeeEmployee[];
+                      if (!assignedEmployees.length) {
+                        const blockHours = Math.max(0, shift.end - shift.start);
+                        return <button key={shift.id} className={`${blockHours <= 4 ? "placeStaffBlock compactPlaceStaff narrowPlaceStaff" : "placeStaffBlock compactPlaceStaff"} ${isSelected ? "selectedDayEmptyStaff" : "quietEmptyStaff"}`} style={{ left, width }} onClick={() => { rememberCoffeePlannerScroll(); setCoffeeScheduleDay(day); setCoffeeAssignSlot({ businessId: business.id, weekday: day, shiftId: shift.id, start: shift.start, end: shift.end }); }} title={`Assign staff for ${day} ${String(shift.start).padStart(2, "0")}-${String(shift.end).padStart(2, "0")}`}>{blockHours <= 4 ? "+" : "+ Staff"}</button>;
+                      }
+                      return assignedEmployees.map((employee, index) => {
+                        const dayHours = employeeHoursForShifts(shifts, employee.id);
+                        const weekHours = weeklyEmployeeHours(cleanCoffee, employee.id);
+                        const overworked = dayHours > coffeeDailyLimit(employee) || weekHours > coffeeWeeklyLimit(employee);
+                        return <div key={`${shift.id}-${employee.id}`} className={`${overworked ? "plannerShiftBlock overworked" : "plannerShiftBlock"} ${isSelected ? "selectedShiftBlock" : "mutedShiftBlock"}`} style={{ left, width, top: `${8 + index * 30}px` }}>
+                          <b>{employee.name}</b><small>{String(shift.start).padStart(2, "0")}-{String(shift.end).padStart(2, "0")}{overworked ? " • Overtime" : ""}</small>
+                          <button onClick={() => { rememberCoffeePlannerScroll(); removeCoffeeEmployeeFromShift(business.id, day, shift.id, employee.id); }}>×</button>
+                        </div>;
+                      });
+                    })}
+                  </div>
+                </div>;
+              })}
+            </div>
+          </div>
+          <div className="plannerLegend plannerLegend065"><span><i className="closedBox" /> Closed Hours</span><span><i className="openBox" /> Open Hours</span><span><i className="staffBox" /> Assigned Staff</span><span><i className="needsStaffBox" /> Needs Staff</span><span>Click hour boxes to open/close time slots. Click an empty open block to assign staff for that day only.</span></div>
+        </section>
+
+        <section className="glass coveragePanel compactCoveragePanel">
+          <div className="sectionHeader"><h3>📊 {coffeeScheduleDay} Coverage</h3><small>Required staff is based on traffic, opening hours, and customer demand.</small></div>
+          <div className="coverageGrid">{coverageLines.length ? coverageLines.map((item) => <div key={item.id} className={`coverageCard ${item.status.toLowerCase()}`}><b>{item.label}</b><span>{item.assigned} / {item.required}</span><small>{trafficLabelFromValue(item.avgTraffic)} traffic • {item.status}</small></div>) : <div className="emptyInline">Closed today. Rent still applies, but no wages or customers are generated.</div>}</div>
+          <div className={shortage ? "employeeWarning compactWarning" : "coverageTip"}>{shortage ? "⚠ Not enough staff for full coverage. Hire part-time workers for rush hours." : "Good scheduling improves customer flow and staff stability."}</div>
+          <div className="miniButtons"><button onClick={() => autoPlanCoffeeShifts(business.id, "lean")}>Lean Payroll</button><button onClick={() => autoPlanCoffeeShifts(business.id, "balanced")}>Balanced Coverage</button><button onClick={() => autoPlanCoffeeShifts(business.id, "rush")}>Rush Coverage</button></div>
+        </section>
       </div>;
     }
 
@@ -2467,13 +2987,23 @@ export default function Home() {
     }
 
     function ReportsTab() {
-      return <div className="coffeeTabPane"><CustomerFlowCard /><TrendCard />{report ? <section className="glass dailyReportCard premiumReportCard"><div className="sectionHeader"><h3>📊 Last Daily Report</h3><small>{report.weekday} • Day {report.day}</small></div><div className="reportGrid"><Detail label="Potential" value={String(report.potentialCustomers)} /><Detail label="Actual Customers" value={String(report.customers)} good /><Detail label="Revenue" value={`+${money(report.revenue)}`} good /><Detail label="Rent" value={`-${money(report.rent)}`} bad /><Detail label="Payroll" value={`-${money(report.wages)}`} bad /><Detail label="Supplies" value={`-${money(report.supplies)}`} bad /><Detail label="Marketing" value={`-${money(report.marketing)}`} bad /><Detail label="Profit" value={`${report.profit >= 0 ? "+" : ""}${money(report.profit)}`} good={report.profit >= 0} bad={report.profit < 0} /><Detail label="Owner Payout" value={`+${money(report.ownerPayout ?? 0)}`} good /><Detail label="Business Cash" value={`${(report.businessCashChange ?? 0) >= 0 ? "+" : ""}${money(report.businessCashChange ?? 0)}`} good={(report.businessCashChange ?? 0) >= 0} bad={(report.businessCashChange ?? 0) < 0} /><Detail label="Player Cash" value={`${(report.playerCashChange ?? 0) >= 0 ? "+" : ""}${money(report.playerCashChange ?? 0)}`} good={(report.playerCashChange ?? 0) >= 0} bad={(report.playerCashChange ?? 0) < 0} /><Detail label="Lost to Competition" value={`-${report.lostCompetition}`} bad /><Detail label="Lost to Long Wait" value={`-${report.lostLongWait}`} bad /><Detail label="Lost to High Prices" value={`-${report.lostHighPrices}`} bad /><Detail label="Staff Result" value={report.staffPerformance} /><Detail label="Satisfaction" value={`${report.satisfaction}% (${report.satisfactionChange >= 0 ? "+" : ""}${report.satisfactionChange})`} good={report.satisfactionChange >= 0} bad={report.satisfactionChange < 0} /></div></section> : <div className="emptyHero"><h3>No report yet</h3><p>Click Next Day to generate a detailed coffee shop report.</p></div>}</div>;
+      const biggestLoss = flow.lostLongWait >= flow.lostCompetition && flow.lostLongWait >= flow.lostHighPrices
+        ? "Long waits are costing you the most customers. Add staff during rush hours or buy speed upgrades."
+        : flow.lostCompetition >= flow.lostHighPrices
+          ? "Competition is pulling customers away. Improve reviews, marketing, or move to a better location."
+          : "High prices are hurting demand. Try a cheaper coffee price or raise satisfaction first.";
+      return <div className="coffeeTabPane reportsPaneClean">
+        <CustomerFlowCard />
+        <TrendCard />
+        <section className="glass insightPanel compactInsightPanel reportTipBox"><div><h3>💡 Recommendation</h3><p>{biggestLoss}</p></div></section>
+        {report ? <section className="glass dailyReportCard premiumReportCard"><div className="sectionHeader"><h3>📊 Last Daily Report</h3><small>{report.weekday} • Day {report.day}</small></div><div className="reportGrid"><Detail label="Potential" value={String(report.potentialCustomers)} /><Detail label="Actual Customers" value={String(report.customers)} good /><Detail label="Revenue" value={`+${money(report.revenue)}`} good /><Detail label="Rent" value={`-${money(report.rent)}`} bad /><Detail label="Payroll" value={`-${money(report.wages)}`} bad /><Detail label="Supplies" value={`-${money(report.supplies)}`} bad /><Detail label="Marketing" value={`-${money(report.marketing)}`} bad /><Detail label="Profit" value={`${report.profit >= 0 ? "+" : ""}${money(report.profit)}`} good={report.profit >= 0} bad={report.profit < 0} /><Detail label="Owner Payout" value={`+${money(report.ownerPayout ?? 0)}`} good /><Detail label="Business Cash" value={`${(report.businessCashChange ?? 0) >= 0 ? "+" : ""}${money(report.businessCashChange ?? 0)}`} good={(report.businessCashChange ?? 0) >= 0} bad={(report.businessCashChange ?? 0) < 0} /><Detail label="Player Cash" value={`${(report.playerCashChange ?? 0) >= 0 ? "+" : ""}${money(report.playerCashChange ?? 0)}`} good={(report.playerCashChange ?? 0) >= 0} bad={(report.playerCashChange ?? 0) < 0} /><Detail label="Lost to Competition" value={`-${report.lostCompetition}`} bad /><Detail label="Lost to Long Wait" value={`-${report.lostLongWait}`} bad /><Detail label="Lost to High Prices" value={`-${report.lostHighPrices}`} bad /><Detail label="Staff Result" value={report.staffPerformance} /><Detail label="Satisfaction" value={`${report.satisfaction}% (${report.satisfactionChange >= 0 ? "+" : ""}${report.satisfactionChange})`} good={report.satisfactionChange >= 0} bad={report.satisfactionChange < 0} /></div></section> : <section className="glass subtleReportNote"><b>Detailed daily report appears after your next day.</b><p>Customer flow and trends are already shown above so you can still make decisions.</p></section>}
+      </div>;
     }
 
     return <div className="glass managePanel coffeePanel coffeeTabbedPanel">
       <div className="sectionHeader bigHeader coffeeHeaderCompact">
         <div>
-          <span className="previewLabel">Coffee Shop V2 • Operations</span>
+          <span className="previewLabel">Business Management</span>
           <h2>☕ {business.name}</h2>
           <p>{stage.name} • {location.icon} {location.name} • {weekday} • Open {String(cleanCoffee.openingHour).padStart(2, "0")}:00-{String(cleanCoffee.closingHour).padStart(2, "0")}:00</p>
         </div>
@@ -2549,10 +3079,39 @@ export default function Home() {
     </section></div>;
   }
 
+  function CoffeeAssignModal() {
+    if (!coffeeAssignSlot) return null;
+    const business = activeGame.businesses.find((item) => item.id === coffeeAssignSlot.businessId && item.coffee);
+    if (!business || !business.coffee) return null;
+    const coffee = migrateCoffeeData(business.coffee);
+    const shifts = activeCoffeeShifts(coffee, coffeeAssignSlot.weekday);
+    const employees = coffeeEmployees(coffee);
+    const slotHours = Math.max(0, coffeeAssignSlot.end - coffeeAssignSlot.start);
+    return <div className="modalBackdrop" onClick={() => setCoffeeAssignSlot(null)}><section className="glass modalCard assignStaffModal" onClick={(e) => e.stopPropagation()}>
+      <div className="sectionHeader bigHeader"><div><span className="previewLabel">Assign Staff</span><h2>{coffeeAssignSlot.weekday} • {String(coffeeAssignSlot.start).padStart(2, "0")}:00-{String(coffeeAssignSlot.end).padStart(2, "0")}:00</h2><p>Choose a staff member. The list shows how much they already work so you avoid double shifts.</p></div><button className="closeButton" onClick={() => setCoffeeAssignSlot(null)}>✕</button></div>
+      <div className="assignList">{employees.map((employee) => {
+        const todayHours = employeeHoursForShifts(shifts, employee.id);
+        const weekHours = weeklyEmployeeHours(coffee, employee.id);
+        const overlapping = shifts.some((shift) => shift.id !== coffeeAssignSlot.shiftId && shift.employeeIds.includes(employee.id) && Math.max(coffeeAssignSlot.start, shift.start) < Math.min(coffeeAssignSlot.end, shift.end));
+        const nearLimit = todayHours + slotHours > 8 || weekHours + slotHours > 40;
+        const status = overlapping ? "Already scheduled" : nearLimit ? "Overtime risk" : employee.mood < 45 ? "Low mood" : "Good";
+        return <article key={employee.id} className={`assignEmployeeRow ${overlapping ? "blocked" : nearLimit ? "warn" : ""}`}>
+          <div className="employeeAvatar assignAvatar">{employee.avatar}</div>
+          <div><b>{employee.name}</b><small>{employee.role}</small></div>
+          <span>{money(employee.hourlyWage)}/hr</span>
+          <span>{todayHours}h / {coffeeDailyLimit(employee)}h</span>
+          <span>{weekHours}h / {coffeeWeeklyLimit(employee)}h</span>
+          <em className={overlapping ? "bad" : nearLimit ? "warn" : "good"}>{status}</em>
+          <button disabled={overlapping} onClick={() => assignCoffeeEmployeeToSlot(business.id, coffeeAssignSlot, employee.id)}>{overlapping ? "Busy" : "Assign"}</button>
+        </article>;
+      })}</div>
+    </section></div>;
+  }
+
   function CoffeeHiringModal() {
     const business = activeGame.businesses.find((item) => item.id === coffeeHiringBusinessId && item.coffee);
     if (!business) return null;
-    return <div className="modalBackdrop" onClick={() => setCoffeeHiringBusinessId("")}><section className="glass modalCard hiringModal" onClick={(e) => e.stopPropagation()}><div className="sectionHeader bigHeader"><div><span className="previewLabel">Hiring Desk</span><h2>👥 Choose who to hire</h2><p>Skilled and reliable workers cost more, but they improve speed, service, and customer satisfaction.</p></div><button className="closeButton" onClick={() => setCoffeeHiringBusinessId("")}>✕</button></div><div className="candidateGrid candidateGridV2">{coffeeCandidates.map((candidate) => <article className="candidateCard candidateCardV2" key={candidate.id}><div className="candidateTop"><div className="employeeAvatar bigEmployeeAvatar">{candidate.avatar}</div><div><h3>{candidate.name}</h3><p>{candidate.role}</p><small>{candidate.note}</small></div></div><div className="detailGrid"><Detail label="Skill" value={`${candidate.skill}`} /><Detail label="Reliability" value={`${candidate.reliability}`} /><Detail label="Mood" value={`${candidate.mood}`} /><Detail label="Wage" value={`${money(candidate.hourlyWage)}/hr`} /></div><button className="nextButton wideButton" onClick={() => hireCoffeeCandidate(business.id, candidate)}>Hire for {money(candidate.hourlyWage * 18)}</button></article>)}</div><button className="softButton" onClick={() => setCoffeeCandidates(generateCoffeeCandidates(business.coffee?.employeesList?.map((employee) => employee.name) ?? []))}>Refresh Candidates</button></section></div>;
+    return <div className="modalBackdrop" onClick={() => setCoffeeHiringBusinessId("")}><section className="glass modalCard hiringModal" onClick={(e) => e.stopPropagation()}><div className="sectionHeader bigHeader"><div><span className="previewLabel">Hiring Desk</span><h2>👥 Choose who to hire</h2><p>Skilled and reliable workers cost more, but they improve speed, service, and customer satisfaction.</p></div><button className="closeButton" onClick={() => setCoffeeHiringBusinessId("")}>✕</button></div><div className="candidateGrid candidateGridV2">{coffeeCandidates.map((candidate) => <article className="candidateCard candidateCardV2" key={candidate.id}><div className="candidateTop"><div className="employeeAvatar bigEmployeeAvatar">{candidate.avatar}</div><div><h3>{candidate.name}</h3><p>{candidate.contractType ?? "Full-time"} {candidate.role}</p><small>{candidate.note}</small></div></div><div className="detailGrid"><Detail label="Skill" value={`${candidate.skill}`} /><Detail label="Reliability" value={`${candidate.reliability}`} /><Detail label="Mood" value={`${candidate.mood}`} /><Detail label="Wage" value={`${money(candidate.hourlyWage)}/hr`} /><Detail label="Contract" value={candidate.contractType ?? "Full-time"} /></div><button className="nextButton wideButton" onClick={() => hireCoffeeCandidate(business.id, candidate)}>Hire for {money(candidate.hourlyWage * 18)}</button></article>)}</div><button className="softButton" onClick={() => setCoffeeCandidates(generateCoffeeCandidates(business.coffee?.employeesList?.map((employee) => employee.name) ?? []))}>Refresh Candidates</button></section></div>;
   }
 
   function BuyPropertyModal() {

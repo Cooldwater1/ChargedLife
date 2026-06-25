@@ -1,12 +1,11 @@
-ChargedLife Pre-Alpha 0.5.7
+ChargedLife Pre-Alpha 0.6.8
 
-Access Page Teaser Update:
-- Redesigned the password gate into a premium pre-alpha landing page.
-- Added a stronger public-facing hero message: Build your empire from nothing.
-- Added feature teaser cards for businesses, people management, net worth growth, and bankruptcy risk.
-- Added a Private Tester Access section to make the password feel exclusive.
-- Moved the password field into a secondary "Already have access?" area.
-- Added a Want Access section with a Coming Soon tester access button.
-- Improved wrong-password messaging with a cleaner premium error state.
-- Kept the password as Kazeb and preserved localStorage unlock behavior.
-- Avoided exposing private internal development system names on the public access page.
+Schedule planner polish update.
+
+Main changes:
+- Grouped the selected-day summary and quick presets into one cleaner control panel.
+- Made selected-day coverage, payroll, and hours explicit.
+- Enlarged opening-hour boxes so they feel clickable instead of decorative dots.
+- Reduced empty staff block visual weight so assigned shifts stand out more.
+- Added warning styling for open days with no staff assigned.
+- Kept schedule scroll stable and contained inside the planner.
