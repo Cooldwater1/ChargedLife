@@ -1,0 +1,29 @@
+import type { Equipment, FastFoodGame, InventoryItem, MenuItem, Supplier } from "./types";
+export const menuItems:MenuItem[]=[
+{id:"classic",name:"Classic Burger",icon:"🍔",price:99,cost:34,popularity:86,rating:4.3,prep:5,active:true,featured:true,sales:0,ingredients:{buns:1,beef:1,cheese:0,salad:.2,sauce:.1,packaging:1}},
+{id:"cheese",name:"Cheeseburger",icon:"🧀",price:119,cost:41,popularity:82,rating:4.4,prep:6,active:false,featured:false,sales:0,ingredients:{buns:1,beef:1,cheese:1,salad:.2,sauce:.1,packaging:1}},
+{id:"chicken",name:"Chicken Burger",icon:"🍗",price:124,cost:43,popularity:72,rating:4.2,prep:7,active:false,featured:false,sales:0,ingredients:{buns:1,chicken:1,salad:.3,sauce:.1,packaging:1}},
+{id:"fries",name:"French Fries",icon:"🍟",price:49,cost:12,popularity:91,rating:4.5,prep:4,active:true,featured:false,sales:0,ingredients:{potatoes:.3,oil:.06,packaging:1}},
+{id:"nuggets",name:"Chicken Nuggets",icon:"🥡",price:79,cost:25,popularity:77,rating:4.1,prep:5,active:false,featured:false,sales:0,ingredients:{chicken:.6,oil:.04,packaging:1}},
+{id:"drink",name:"Soft Drink",icon:"🥤",price:39,cost:8,popularity:88,rating:4.0,prep:1,active:true,featured:false,sales:0,ingredients:{syrup:.08,cups:1}},
+{id:"shake",name:"Milkshake",icon:"🥛",price:59,cost:18,popularity:64,rating:4.4,prep:3,active:false,featured:false,sales:0,ingredients:{syrup:.12,cups:1}},
+];
+export const inventory:InventoryItem[]=[
+["buns","Burger Buns",120,250,60,4.5,88,3,"pcs"],["beef","Beef Patties",100,220,50,18,91,3,"pcs"],["chicken","Chicken",80,180,40,16,89,3,"portions"],["cheese","Cheese",100,200,40,4,87,6,"slices"],["potatoes","Potatoes",65,160,35,9,85,9,"kg"],["oil","Cooking Oil",28,70,15,24,88,14,"L"],["salad","Salad",22,60,14,19,86,2,"kg"],["sauce","Sauces",25,70,15,31,90,12,"L"],["syrup","Drink Syrup",18,55,12,42,84,20,"L"],["cups","Cups",180,400,90,1.5,90,60,"pcs"],["packaging","Packaging",220,500,100,2.2,88,90,"pcs"],["cleaning","Cleaning Supplies",35,90,18,12,92,90,"units"],
+].map(([id,name,stock,capacity,reorder,unitCost,quality,spoilage,unit])=>({id,name,stock,capacity,reorder,unitCost,quality,spoilage,unit,autoReorder:false})) as InventoryItem[];
+export const suppliers:Supplier[]=[
+{id:"budget",name:"Budget Foods",price:.86,quality:70,reliability:72,delivery:3,minimum:2200,description:"Lowest prices, larger minimum orders and higher delivery risk.",lateRisk:18,emergencyFee:1800,categories:["all"],reputationImpact:-2},
+{id:"standard",name:"Standard Supply Co.",price:1,quality:85,reliability:89,delivery:2,minimum:1000,description:"Balanced pricing, dependable service and broad availability.",lateRisk:8,emergencyFee:1200,categories:["all"],reputationImpact:0},
+{id:"premium",name:"Premium Fresh",price:1.18,quality:96,reliability:94,delivery:2,minimum:1400,description:"Excellent quality, lower spoilage risk and stronger customer perception.",lateRisk:4,emergencyFee:1500,categories:["all"],reputationImpact:2},
+{id:"local",name:"Local Produce Network",price:1.06,quality:97,reliability:82,delivery:2,minimum:800,description:"Outstanding fresh produce, but limited meat and packaging availability.",lateRisk:12,emergencyFee:1650,categories:["produce","sauces"],reputationImpact:3},
+{id:"express",name:"Express Food Logistics",price:1.28,quality:84,reliability:97,delivery:1,minimum:500,description:"Fast delivery for emergencies at a premium price.",lateRisk:2,emergencyFee:650,categories:["all"],reputationImpact:0},
+];
+export const equipment:Equipment[]=["Grill","Fryer","Refrigerator","Freezer","Soda Machine","Cash Register","Cleaning Station"].map((name,i)=>({id:name.toLowerCase().replaceAll(" ","-"),name,condition:92-i*2,capacity:70+i*3,speed:70+i*2,maintenanceCost:250+i*45,level:1,breakdownRisk:4+i}));
+export const newGame=():FastFoodGame=>({
+version:"1.0.61",founderName:"",companyName:"",companyCreated:false,selectedIndustry:"fast-food",businessId:"business-fast-food-1",locationId:"location-fast-food-1",businessName:"Fast Food Group",selectedBusinessId:"business-fast-food-1",selectedLocationId:"location-fast-food-1",additionalTestLocations:0,settings:{confirmNextDay:false,autoOpenDailyReport:true,pauseOnCriticalIssue:true,detailedSimulation:true,tutorialHints:true,showOpeningChecklist:true,reportDensity:"detailed",uiScale:"normal",sidebarMode:"expanded",graphAnimation:true,reduceEffects:false,showHelperText:true,numberFormat:"standard",currency:"USD",largerText:false,highContrast:false,reduceMotion:false,colorBlindIndicators:false,strongFocus:false,testingToolsEnabled:false},founderLevel:1,personalCash:12450,companyCash:18700,companyValue:18700,day:1,month:1,weekday:0,
+restaurantName:"",slogan:"",concept:"Burgers & Fries",location:"Small Neighborhood Unit",themeColor:"#ff9f1c",buildingAssetId:"burger-starter-classic",logoAssetId:"burger-badge",primaryColor:"#ff9f1c",secondaryColor:"#111827",signStyle:"integrated",signPlacementVersion:2,signContentMode:"integrated",showSignLogo:true,sloganVisibilityMode:"auto",visualStage:"starter",hasDriveThrough:false,appearanceUpgradeHistory:[],renameUsed:false,
+operationalStatus:"planning",ownerWorksNextShift:false,founderFatigue:0,firstOpeningCompleted:false,restaurantOpenedDay:null,
+reputation:4.2,reviews:0,restaurantLevel:1,restaurantXp:0,restaurantValue:18700,capacity:120,rentDaily:420,marketingDays:0,
+selectedSupplierId:"",supplierProgress:suppliers.map(s=>({supplierId:s.id,completedOrders:0,totalSpent:0,contract:"None",contractDaysRemaining:0})),pendingDeliveries:[],firstStarterDeliveryUsed:false,
+payoutPolicy:"Balanced",loans:[],menu:structuredClone(menuItems),inventory:structuredClone(inventory).map(i=>({...i,stock:0})),employees:[],equipment:structuredClone(equipment),suppliers:structuredClone(suppliers),reports:[],monthlyReports:[],
+notifications:[],recentReviews:[],legacyBusinesses:[],founded:false});
