@@ -1,5 +1,6 @@
 {
   "$schema": "https://openapi.vercel.sh/vercel.json",
+  "installCommand": "node scripts/capture-vercel-install-log.mjs",
   "buildCommand": "node scripts/capture-vercel-build-log.mjs",
   "outputDirectory": "public"
 }
