@@ -4,6 +4,9 @@ on:
   push:
     branches:
       - fix/vercel-build-2026-09-05
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
