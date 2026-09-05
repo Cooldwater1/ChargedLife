@@ -1,0 +1,7 @@
+{
+  "name": "chargedlife-root-diagnostic",
+  "private": true,
+  "scripts": {
+    "build": "node -e \"const fs=require('fs');fs.mkdirSync('public',{recursive:true});fs.writeFileSync('public/index.html','ChargedLife root directory diagnostic')\""
+  }
+}
